@@ -1,6 +1,6 @@
 # GitNote
 
-Very simple Markdown editor for one GitHub repo path using:
+Very simple Markdown editor for GitHub repos, built with:
 
 - TanStack Start
 - shadcn/ui
@@ -8,20 +8,27 @@ Very simple Markdown editor for one GitHub repo path using:
 - Better Auth (GitHub login)
 - GitHub App installation tokens (repo read/write)
 
-## Data model
+## Content model
 
-All content is fixed to:
+Markdown files are stored as:
 
 ```md
 ---
-title: My title
+icon: 🚀
+cover: https://images.unsplash.com/...
 ---
 
-Body markdown...
+# My title
+
+Body markdown
 ```
 
-Hierarchy is filesystem-only:
+- `title`: first H1 in the document body.
+- `icon`: optional frontmatter field.
+- `cover`: optional frontmatter field.
+- hierarchy: filesystem-only (folders).
 
+Example:
 - parent: `setup.md`
 - children: `setup/*.md`
 
@@ -43,7 +50,7 @@ cp .env.example .env
 
 - Better Auth:
   - `BETTER_AUTH_SECRET`
-  - `BETTER_AUTH_URL` (for local: `http://localhost:4000`)
+  - `BETTER_AUTH_URL` (for local: `http://localhost:4000` by default)
   - `AUTH_DB_PATH` (for local sqlite file)
 - GitHub App:
   - `GITHUB_APP_ID`
@@ -64,12 +71,6 @@ For headless/server installs (no local browser callback), use:
 pnpm setup -- --mode manual
 ```
 
-Wizard options:
-
-```bash
-pnpm setup -- --profile remote --mode manual
-```
-
 4. Start app:
 
 ```bash
@@ -84,29 +85,40 @@ pnpm dev
 pnpm auth:migrate
 ```
 
-## First-run flow
+## App flow
 
 1. Sign in with GitHub.
-2. First screen shows owner/org picker + repo picker.
-3. If app is not installed for an owner/org, click `Install app for owner/org`.
-4. After installation, click `Refresh owners`, then select repo and open it.
-5. Use `Install app on another org/account` anytime to add more org access.
+2. Home page is a repo selector (account + repo search).
+3. Open a repo and branch via route: `/:owner/:repo/:branch` (optional `?root=...`).
+4. Edit content in a Notion-like layout (sidebar tree + editor pane).
+
+## Editor behavior
+
+- Save button states:
+  - check = clean
+  - save icon = unsaved changes
+  - spinner = saving
+- Keyboard save: `Cmd+S` / `Ctrl+S`
+- Title is required to save/create.
+- `ArrowDown` in title focuses body editor.
+- `ArrowUp` at start of body focuses title.
+- Cover:
+  - top, full-width image
+  - currently validated to Unsplash URLs
+- Icon:
+  - emoji picker with search
+  - sidebar and breadcrumb show emoji + title
+
+## Loading / empty states
+
+- Skeletons for repo and file loading.
+- Empty state component when repo has no markdown entries.
 
 ## GitHub App notes
 
-1. OAuth callback URL should point to Better Auth callback:
+1. OAuth callback URL should be Better Auth callback:
    - `http://localhost:4000/api/auth/callback/github`
 2. Install the app on the account/repo you want to edit.
-3. Repo permissions should include:
+3. Required permissions:
    - Contents: Read and write
    - Metadata: Read-only
-4. In GitHub App settings, keep `Request user authorization (OAuth) during installation` disabled.
-
-## Target URL params
-
-Selector is the home route (`/`).
-
-Editor route is path-based: `/:owner/:repo/:branch`
-
-Optional query:
-- `root`
