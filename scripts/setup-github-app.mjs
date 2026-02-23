@@ -23,7 +23,7 @@ if (args.help) {
 }
 
 async function main() {
-  intro('GitNote Setup Wizard')
+  intro('PullNotes Setup Wizard')
 
   const profile = await askSelect({
     message: 'Environment profile',
@@ -83,7 +83,7 @@ async function main() {
       : ''
 
   const baseUrl = trimSlash(defaultBaseUrl)
-  const appName = (args.appName || 'GitNote').trim()
+  const appName = (args.appName || 'PullNotes').trim()
 
   const authCallbackUrl = `${baseUrl}/api/auth/callback/github`
   const state = randomBytes(16).toString('hex')

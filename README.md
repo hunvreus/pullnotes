@@ -1,4 +1,4 @@
-# GitNote
+# PullNotes
 
 Very simple Markdown editor for GitHub repos, built with:
 

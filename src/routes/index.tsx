@@ -252,7 +252,7 @@ function SelectorPage() {
     return (
       <main className="grid min-h-screen place-items-center p-6">
         <div className="w-full max-w-lg space-y-4 rounded-md border p-5">
-          <h1 className="text-lg font-semibold">GitNote</h1>
+          <h1 className="text-lg font-semibold">PullNotes</h1>
           <p className="text-sm text-muted-foreground">
             Sign in, pick an account, then open a repository.
           </p>

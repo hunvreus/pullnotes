@@ -169,7 +169,7 @@ const saveFileServerFn = createServerFn({ method: 'POST' })
     return upsertMarkdownFile(data.target, {
       path: data.path,
       content,
-      message: `chore(gitnote): update ${data.path}`,
+      message: `chore(pullnotes): update ${data.path}`,
       sha: data.sha,
     })
   })
@@ -187,7 +187,7 @@ const deleteFileServerFn = createServerFn({ method: 'POST' })
     await deleteMarkdownFile(data.target, {
       path: data.path,
       sha: data.sha,
-      message: `chore(gitnote): delete ${data.path}`,
+      message: `chore(pullnotes): delete ${data.path}`,
     })
     return { ok: true as const }
   })
