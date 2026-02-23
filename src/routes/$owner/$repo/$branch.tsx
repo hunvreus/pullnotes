@@ -1,0 +1,1618 @@
+import { createFileRoute } from '@tanstack/react-router'
+import { createServerFn, useServerFn } from '@tanstack/react-start'
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  Ellipsis,
+  FileText,
+  ImagePlus,
+  Loader2,
+  LogIn,
+  Plus,
+  Save,
+  Search,
+  SmilePlus,
+} from 'lucide-react'
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
+import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '#/components/ui/breadcrumb'
+import { Button } from '#/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '#/components/ui/dropdown-menu'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '#/components/ui/empty'
+import { Editor } from '#/components/ui/editor'
+import { Input } from '#/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '#/components/ui/popover'
+import { ScrollArea } from '#/components/ui/scroll-area'
+import { Separator } from '#/components/ui/separator'
+import { Skeleton } from '#/components/ui/skeleton'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInput,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from '#/components/ui/sidebar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '#/components/ui/tooltip'
+import { authClient } from '#/lib/auth-client'
+import {
+  deleteMarkdownFile,
+  getMarkdownFile,
+  listRecentCommits,
+  listMarkdownEntriesViaGraphql,
+  type RepoMarkdownMetaEntry,
+  type RepoTargetInput,
+  upsertMarkdownFile,
+} from '#/lib/github'
+import { parseMarkdownEntry, serializeMarkdownEntry } from '#/lib/markdown'
+import { requireSession } from '#/lib/session'
+
+type RouteSearch = {
+  root?: string
+}
+
+type MarkdownFile = RepoMarkdownMetaEntry
+
+type FolderNode = {
+  path: string
+  name: string
+  files: MarkdownFile[]
+  folders: FolderNode[]
+}
+
+type ThemeMode = 'system' | 'dark' | 'light'
+type EmojiOption = { unicode: string; label: string }
+const ICON_OPTIONS: EmojiOption[] = [
+  { unicode: '😀', label: 'grinning face' },
+  { unicode: '😁', label: 'beaming face' },
+  { unicode: '🙂', label: 'slightly smiling face' },
+  { unicode: '😊', label: 'smiling face' },
+  { unicode: '😉', label: 'winking face' },
+  { unicode: '😍', label: 'heart eyes' },
+  { unicode: '🤩', label: 'star struck' },
+  { unicode: '🥳', label: 'partying face' },
+  { unicode: '😎', label: 'sunglasses' },
+  { unicode: '🤓', label: 'nerd face' },
+  { unicode: '✨', label: 'sparkles' },
+  { unicode: '🔥', label: 'fire' },
+  { unicode: '🚀', label: 'rocket' },
+  { unicode: '📝', label: 'memo' },
+  { unicode: '📌', label: 'pin' },
+  { unicode: '✅', label: 'check mark' },
+  { unicode: '📚', label: 'books' },
+  { unicode: '📘', label: 'blue book' },
+  { unicode: '📙', label: 'orange book' },
+  { unicode: '📗', label: 'green book' },
+  { unicode: '📕', label: 'red book' },
+  { unicode: '🧭', label: 'compass' },
+  { unicode: '🎯', label: 'target' },
+  { unicode: '🧩', label: 'puzzle' },
+  { unicode: '🛠️', label: 'tools' },
+  { unicode: '⚙️', label: 'gear' },
+  { unicode: '💡', label: 'idea' },
+  { unicode: '🧠', label: 'brain' },
+  { unicode: '🌍', label: 'globe' },
+  { unicode: '🏁', label: 'flag' },
+]
+
+const listFilesServerFn = createServerFn({ method: 'GET' })
+  .inputValidator((input: { target: RepoTargetInput }) => input)
+  .handler(async ({ data }) => {
+    await requireSession()
+    return listMarkdownEntriesViaGraphql(data.target)
+  })
+
+const getFileServerFn = createServerFn({ method: 'GET' })
+  .inputValidator((input: { target: RepoTargetInput; path: string }) => input)
+  .handler(async ({ data }) => {
+    await requireSession()
+
+    const file = await getMarkdownFile(data.target, data.path)
+    const parsed = parseMarkdownEntry(file.content)
+
+    return {
+      path: data.path,
+      sha: file.sha,
+      title: parsed.title,
+      icon: parsed.icon,
+      cover: parsed.cover,
+      body: parsed.body,
+    }
+  })
+
+const saveFileServerFn = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (input: {
+      target: RepoTargetInput
+      path: string
+      title: string
+      icon: string
+      cover: string
+      body: string
+      sha?: string
+    }) => input,
+  )
+  .handler(async ({ data }) => {
+    await requireSession()
+
+    const content = serializeMarkdownEntry({
+      title: data.title,
+      icon: data.icon,
+      cover: data.cover,
+      body: data.body,
+    })
+
+    return upsertMarkdownFile(data.target, {
+      path: data.path,
+      content,
+      message: `chore(gitnote): update ${data.path}`,
+      sha: data.sha,
+    })
+  })
+
+const deleteFileServerFn = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (input: {
+      target: RepoTargetInput
+      path: string
+      sha: string
+    }) => input,
+  )
+  .handler(async ({ data }) => {
+    await requireSession()
+    await deleteMarkdownFile(data.target, {
+      path: data.path,
+      sha: data.sha,
+      message: `chore(gitnote): delete ${data.path}`,
+    })
+    return { ok: true as const }
+  })
+
+const recentCommitsServerFn = createServerFn({ method: 'GET' })
+  .inputValidator((input: { target: RepoTargetInput }) => input)
+  .handler(async ({ data }) => {
+    await requireSession()
+    return listRecentCommits(data.target)
+  })
+
+export const Route = createFileRoute('/$owner/$repo/$branch')({
+  validateSearch: (search): RouteSearch => {
+    const raw = search as Record<string, unknown>
+
+    return {
+      root: typeof raw.root === 'string' ? raw.root : undefined,
+    }
+  },
+  loader: async () => [],
+  component: App,
+})
+
+function App() {
+  const initialFiles = Route.useLoaderData()
+  const routeSearch = Route.useSearch()
+  const params = Route.useParams()
+  const navigate = Route.useNavigate()
+
+  const listFiles = useServerFn(listFilesServerFn)
+  const getFile = useServerFn(getFileServerFn)
+  const saveFile = useServerFn(saveFileServerFn)
+  const deleteFile = useServerFn(deleteFileServerFn)
+  const getRecentCommits = useServerFn(recentCommitsServerFn)
+
+  const { data: authSession, isPending: authPending } = authClient.useSession()
+  const titleInputRef = useRef<HTMLInputElement>(null)
+  const editorRegionRef = useRef<HTMLDivElement>(null)
+
+  const [files, setFiles] = useState<MarkdownFile[]>(initialFiles)
+  const [filterQuery, setFilterQuery] = useState('')
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set(['']))
+  const [isLoadingFile, setIsLoadingFile] = useState(false)
+  const [isLoadingRepo, setIsLoadingRepo] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [icon, setIcon] = useState('')
+  const [cover, setCover] = useState('')
+  const [sha, setSha] = useState<string | undefined>(undefined)
+  const [hasLoadedFile, setHasLoadedFile] = useState(false)
+  const [loadedPath, setLoadedPath] = useState<string | null>(null)
+  const [savedTitle, setSavedTitle] = useState('')
+  const [savedIcon, setSavedIcon] = useState('')
+  const [savedCover, setSavedCover] = useState('')
+  const [savedBody, setSavedBody] = useState('')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [recentCommits, setRecentCommits] = useState<Array<{
+    sha: string
+    message: string
+    authorName: string
+    authorAvatarUrl: string | null
+    date: string | null
+  }>>([])
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system')
+  const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false)
+  const [emojiQuery, setEmojiQuery] = useState('')
+  const [allEmojiOptions, setAllEmojiOptions] = useState<EmojiOption[] | null>(null)
+  const [isEmojiSearchLoading, setIsEmojiSearchLoading] = useState(false)
+
+  const owner = params.owner.trim()
+  const repo = params.repo.trim()
+  const branch = params.branch.trim()
+  const rootPath = (routeSearch.root || '').replace(/^\/+|\/+$/g, '')
+
+  const activeTarget = useMemo(
+    () => ({ owner, repo, branch, rootPath }),
+    [owner, repo, branch, rootPath],
+  )
+
+  const tree = useMemo(() => buildTree(files), [files])
+  const fileMap = useMemo(() => new Map(files.map((file) => [file.path, file])), [files])
+  const isAuthenticated = Boolean(authSession?.user)
+  const titleMissing = title.trim().length === 0
+  const filteredEmojiOptions = useMemo(() => {
+    const query = emojiQuery.trim().toLowerCase()
+    if (!query) return ICON_OPTIONS
+
+    const source = allEmojiOptions || ICON_OPTIONS
+    return source
+      .filter((item) => item.label.toLowerCase().includes(query) || item.unicode.includes(query))
+      .slice(0, 120)
+  }, [emojiQuery, allEmojiOptions])
+
+  useEffect(() => {
+    const query = emojiQuery.trim()
+    if (!query || allEmojiOptions || isEmojiSearchLoading) return
+
+    let cancelled = false
+    const load = async () => {
+      setIsEmojiSearchLoading(true)
+      try {
+        const module = (await import('emojibase-data/en/compact.json')) as {
+          default: Array<{ unicode?: string; label?: string }>
+        }
+        if (cancelled) return
+        const options = module.default
+          .filter((item) => Boolean(item.unicode && item.label))
+          .map((item) => ({
+            unicode: item.unicode as string,
+            label: item.label as string,
+          }))
+        setAllEmojiOptions(options)
+      } finally {
+        if (!cancelled) setIsEmojiSearchLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [emojiQuery, allEmojiOptions])
+
+  const isDirty =
+    hasLoadedFile &&
+    !isLoadingFile &&
+    loadedPath === selectedPath &&
+    (title.trim() !== savedTitle.trim() ||
+      icon.trim() !== savedIcon.trim() ||
+      cover.trim() !== savedCover.trim() ||
+      normalizeBodyForCompare(body) !== normalizeBodyForCompare(savedBody))
+  const isSelectedFileLoaded =
+    hasLoadedFile && Boolean(selectedPath) && loadedPath === selectedPath && !isLoadingFile
+  const canSave =
+    Boolean(isAuthenticated) &&
+    isSelectedFileLoaded &&
+    !isSaving &&
+    !isLoadingRepo &&
+    !titleMissing &&
+    isDirty
+
+  const repoUrl = `https://github.com/${owner}/${repo}/tree/${branch}${rootPath ? `/${rootPath}` : ''}`
+  const commitsUrl = `https://github.com/${owner}/${repo}/commits/${branch}`
+  const fileUrl = selectedPath
+    ? `https://github.com/${owner}/${repo}/blob/${branch}${rootPath ? `/${rootPath}` : ''}/${selectedPath}`
+    : null
+  const breadcrumbs = useMemo(() => {
+    if (!selectedPath) return []
+    const stem = selectedPath.replace(/\.md$/i, '')
+    const parts = stem.split('/').filter(Boolean)
+    return parts.map((_, index) => {
+      const mdPath = `${parts.slice(0, index + 1).join('/')}.md`
+      const file = fileMap.get(mdPath)
+      return {
+        path: mdPath,
+        label: file?.title?.trim() || parts[index] || 'untitled',
+        icon: file?.icon?.trim() || '',
+      }
+    })
+  }, [selectedPath, fileMap])
+
+  const refreshFiles = async () => {
+    const nextFiles = await listFiles({
+      data: {
+        target: activeTarget,
+      },
+    })
+
+    setFiles(nextFiles)
+
+    if (!selectedPath && nextFiles[0]) {
+      setSelectedPath(nextFiles[0].path)
+    }
+  }
+
+  useEffect(() => {
+    setFiles([])
+    setSelectedPath(null)
+    setTitle('')
+    setBody('')
+    setIcon('')
+    setCover('')
+    setSha(undefined)
+    setHasLoadedFile(false)
+    setLoadedPath(null)
+    setSavedTitle('')
+    setSavedIcon('')
+    setSavedCover('')
+    setSavedBody('')
+    setErrorMessage(null)
+    setRecentCommits([])
+    setIsLoadingRepo(true)
+  }, [owner, repo, branch, rootPath])
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setFiles([])
+      setSelectedPath(null)
+      setIsLoadingRepo(false)
+      return
+    }
+
+    const loadFiles = async () => {
+      setIsLoadingRepo(true)
+      setErrorMessage(null)
+
+      try {
+        await refreshFiles()
+      } catch (error) {
+        setErrorMessage(errorToMessage(error))
+      } finally {
+        setIsLoadingRepo(false)
+      }
+    }
+
+    void loadFiles()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, owner, repo, branch, rootPath])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    const loadCommit = async () => {
+      try {
+        const commits = await getRecentCommits({
+          data: {
+            target: activeTarget,
+          },
+        })
+        setRecentCommits(commits)
+      } catch {
+        setRecentCommits([])
+      }
+    }
+
+    void loadCommit()
+  }, [isAuthenticated, activeTarget, getRecentCommits])
+
+  useEffect(() => {
+    if (!selectedPath || !isAuthenticated) return
+
+    const load = async () => {
+      setIsLoadingFile(true)
+      setHasLoadedFile(false)
+      setErrorMessage(null)
+
+      try {
+        const file = await getFile({
+          data: {
+            target: activeTarget,
+            path: selectedPath,
+          },
+        })
+
+        setTitle(file.title)
+        setIcon(file.icon)
+        setCover(file.cover)
+        setBody(file.body)
+        setSha(file.sha)
+        setLoadedPath(file.path)
+        setSavedTitle(file.title)
+        setSavedIcon(file.icon)
+        setSavedCover(file.cover)
+        setSavedBody(file.body)
+        setHasLoadedFile(true)
+      } catch (error) {
+        setErrorMessage(errorToMessage(error))
+      } finally {
+        setIsLoadingFile(false)
+      }
+    }
+
+    void load()
+  }, [selectedPath, getFile, isAuthenticated, activeTarget])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const nextTheme = window.localStorage.getItem('theme')
+    if (nextTheme === 'dark' || nextTheme === 'light' || nextTheme === 'system') {
+      setThemeMode(nextTheme)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    window.localStorage.setItem('theme', themeMode)
+
+    const root = document.documentElement
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+
+    const syncTheme = () => {
+      const resolved = themeMode === 'system' ? (mediaQuery.matches ? 'dark' : 'light') : themeMode
+      root.classList.toggle('dark', resolved === 'dark')
+    }
+
+    syncTheme()
+    mediaQuery.addEventListener('change', syncTheme)
+    return () => mediaQuery.removeEventListener('change', syncTheme)
+  }, [themeMode])
+
+  const focusEditor = () => {
+    const editorEl = editorRegionRef.current?.querySelector('.ProseMirror') as HTMLElement | null
+    editorEl?.focus()
+  }
+
+  const focusTitleInput = () => {
+    const input = titleInputRef.current
+    if (!input) return
+    input.focus()
+    const cursor = input.value.length
+    input.setSelectionRange(cursor, cursor)
+  }
+
+  const handleSetCover = () => {
+    const nextCover = window.prompt('Paste an Unsplash image URL', cover)
+    if (nextCover === null) return
+    const trimmed = nextCover.trim()
+    if (trimmed && !isUnsplashUrl(trimmed)) {
+      setErrorMessage('Cover URL must come from Unsplash.')
+      return
+    }
+    setErrorMessage(null)
+    setCover(trimmed)
+  }
+
+  const handleSetIcon = (nextIcon: string) => {
+    setIcon(nextIcon)
+    setIsEmojiPopoverOpen(false)
+    setEmojiQuery('')
+    setErrorMessage(null)
+  }
+
+  const handleSave = async () => {
+    if (!selectedPath) return
+    const cleanTitle = title.trim()
+    if (!cleanTitle) {
+      setErrorMessage('Title is required.')
+      return
+    }
+
+    setIsSaving(true)
+    setErrorMessage(null)
+
+    try {
+      const result = await saveFile({
+        data: {
+          target: activeTarget,
+          path: selectedPath,
+          title: cleanTitle,
+          icon,
+          cover,
+          body,
+          sha,
+        },
+      })
+
+      setSha(result.sha)
+      setTitle(cleanTitle)
+      setSavedTitle(cleanTitle)
+      setSavedIcon(icon)
+      setSavedCover(cover)
+      setSavedBody(body)
+      await refreshFiles()
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isSaveCombo = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's'
+      if (!isSaveCombo) return
+
+      event.preventDefault()
+
+      const blocked =
+        !isAuthenticated || !selectedPath || isSaving || isLoadingFile || !isDirty || titleMissing
+      if (blocked) return
+
+      void handleSave()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isAuthenticated, selectedPath, isSaving, isLoadingFile, isDirty, titleMissing, handleSave])
+
+  const handleCreate = async () => {
+    const nextTitle = window.prompt('Title')
+    if (!nextTitle) return
+    const cleanTitle = nextTitle.trim()
+    if (!cleanTitle) {
+      setErrorMessage('Title is required.')
+      return
+    }
+
+    const nextSlug = toSlug(cleanTitle)
+    if (!nextSlug) {
+      setErrorMessage('Title is required.')
+      return
+    }
+    const targetPath = selectedPath
+      ? `${dirname(selectedPath) ? `${dirname(selectedPath)}/` : ''}${nextSlug}.md`
+      : `${nextSlug}.md`
+
+    setIsSaving(true)
+    setErrorMessage(null)
+
+    try {
+      await saveFile({
+        data: {
+          target: activeTarget,
+          path: targetPath,
+          title: cleanTitle,
+          icon: '',
+          cover: '',
+          body: '',
+        },
+      })
+
+      await refreshFiles()
+      setSelectedPath(targetPath)
+      expandParents(targetPath, setExpandedFolders)
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const toggleFolder = (path: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const handleSignIn = async () => {
+    await authClient.signIn.social({
+      provider: 'github',
+      callbackURL: window.location.pathname + window.location.search,
+    })
+  }
+
+  const handleSignOut = async () => {
+    await authClient.signOut()
+    setSelectedPath(null)
+  }
+
+  const handleRename = async () => {
+    if (!selectedPath || !sha) return
+    const current = fileLabel(selectedPath)
+    const nextName = window.prompt('Rename page', current)
+    if (!nextName) return
+    const nextSlug = toSlug(nextName)
+    if (!nextSlug) return
+
+    const nextPath = `${dirname(selectedPath) ? `${dirname(selectedPath)}/` : ''}${nextSlug}.md`
+    if (nextPath === selectedPath) return
+
+    setIsSaving(true)
+    setErrorMessage(null)
+    try {
+      await saveFile({
+        data: {
+          target: activeTarget,
+          path: nextPath,
+          title,
+          icon,
+          cover,
+          body,
+        },
+      })
+      await deleteFile({
+        data: {
+          target: activeTarget,
+          path: selectedPath,
+          sha,
+        },
+      })
+      setSelectedPath(nextPath)
+      await refreshFiles()
+      expandParents(nextPath, setExpandedFolders)
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedPath || !sha) return
+    if (!window.confirm(`Delete ${selectedPath}?`)) return
+
+    setIsSaving(true)
+    setErrorMessage(null)
+    try {
+      await deleteFile({
+        data: {
+          target: activeTarget,
+          path: selectedPath,
+          sha,
+        },
+      })
+      setSelectedPath(null)
+      setTitle('')
+      setIcon('')
+      setCover('')
+      setBody('')
+      setSha(undefined)
+      setHasLoadedFile(false)
+      setLoadedPath(null)
+      setSavedTitle('')
+      setSavedIcon('')
+      setSavedCover('')
+      setSavedBody('')
+      await refreshFiles()
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarHeader>
+          {isLoadingRepo ? (
+            <div className="space-y-2 p-1">
+              <div className="flex h-8 items-center gap-2 rounded-md px-2">
+                <Skeleton className="size-7 rounded-md" />
+                <div className="grid flex-1 gap-1">
+                  <Skeleton className="h-3 w-32 rounded-sm" />
+                  <Skeleton className="h-3 w-16 rounded-sm" />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-8 flex-1 rounded-md" />
+                <Skeleton className="size-8 rounded-md" />
+              </div>
+            </div>
+          ) : (
+            <>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+                        <Avatar className="size-8 rounded-md">
+                          <AvatarImage src={`https://github.com/${owner}.png`} alt={owner} />
+                          <AvatarFallback>{owner.slice(0, 2).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        <div className="grid flex-1 text-left text-sm leading-tight">
+                          <span className="truncate font-medium">{owner}/{repo}</span>
+                          <span className="truncate text-xs text-muted-foreground">{branch}</span>
+                        </div>
+                        <ChevronsUpDown className="ml-auto size-4" />
+                      </SidebarMenuButton>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg" align="start" side="bottom" sideOffset={4}>
+                      <DropdownMenuItem asChild>
+                        <a href={repoUrl} target="_blank" rel="noreferrer">Open on GitHub</a>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => void navigate({ to: '/' })}>
+                        Change repository
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </SidebarMenuItem>
+              </SidebarMenu>
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <SidebarInput
+                    value={filterQuery}
+                    onChange={(event) => setFilterQuery(event.target.value)}
+                    placeholder="Search files"
+                    className="h-8 pl-9"
+                    disabled={!isAuthenticated}
+                  />
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => void handleCreate()}
+                      disabled={!isAuthenticated || isSaving}
+                    >
+                      <Plus className="size-4" />
+                      <span className="sr-only">Add page</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Add page</TooltipContent>
+                </Tooltip>
+              </div>
+            </>
+          )}
+        </SidebarHeader>
+
+        <SidebarContent>
+          <ScrollArea className="h-full">
+            <div className="p-2">
+              {isLoadingRepo ? (
+                <div className="space-y-1 px-1">
+                  {Array.from({ length: 10 }).map((_, index) => (
+                    <Skeleton
+                      key={`sidebar-skeleton-${index}`}
+                      className={`h-7 rounded-md ${index < 4 ? 'w-full' : index < 7 ? 'w-5/6' : 'w-2/3'}`}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <TreeView
+                  root={tree}
+                  expandedFolders={expandedFolders}
+                  onToggleFolder={toggleFolder}
+                  onSelectFile={setSelectedPath}
+                  selectedPath={selectedPath}
+                  fileSearch={filterQuery}
+                />
+              )}
+            </div>
+          </ScrollArea>
+        </SidebarContent>
+
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+                    <Avatar className="size-8">
+                      <AvatarImage src={`https://github.com/${owner}.png`} alt={owner} />
+                      <AvatarFallback>{owner.slice(0, 2).toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    <div className="grid flex-1 text-left text-sm leading-tight">
+                      <span className="truncate font-medium">{authSession?.user?.name || authSession?.user?.email || 'User'}</span>
+                      <span className="truncate text-xs text-muted-foreground">{authSession?.user?.email || ''}</span>
+                    </div>
+                    <ChevronsUpDown className="ml-auto size-4" />
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg" align="end" side="top" sideOffset={4}>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel className="text-xs text-muted-foreground">
+                      Theme
+                    </DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={themeMode}
+                      onValueChange={(value) => setThemeMode(value as ThemeMode)}
+                    >
+                      <DropdownMenuRadioItem value="system">
+                        System
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="dark">
+                        Dark
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="light">
+                        Light
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  {isAuthenticated ? (
+                    <DropdownMenuItem variant="destructive" onSelect={() => void handleSignOut()}>
+                      Sign out
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onSelect={() => void handleSignIn()}>
+                      <LogIn className="mr-2 size-4" />
+                      Sign in
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
+
+      <SidebarInset>
+        <div className="flex h-svh flex-col">
+          <div className="flex h-14 items-center justify-between border-b px-4">
+            <div className="flex min-w-0 items-center gap-2">
+              <SidebarTrigger className="md:hidden" />
+              <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4 md:hidden" />
+              {selectedPath ? (
+                <Breadcrumb>
+                  <BreadcrumbList className="gap-1 text-sm">
+                    {breadcrumbs.map((crumb, index) => {
+                      const isLast = index === breadcrumbs.length - 1
+                      return (
+                        <BreadcrumbItem key={crumb.path} className="min-w-0">
+                          {isLast ? (
+                            <BreadcrumbPage className="flex min-w-0 items-center gap-1">
+                              {crumb.icon ? (
+                                <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+                                  {crumb.icon}
+                                </span>
+                              ) : null}
+                              <span className="truncate">{crumb.label}</span>
+                            </BreadcrumbPage>
+                          ) : (
+                            <BreadcrumbLink asChild>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPath(crumb.path)}
+                                className="flex min-w-0 items-center gap-1"
+                              >
+                                {crumb.icon ? (
+                                  <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+                                    {crumb.icon}
+                                  </span>
+                                ) : null}
+                                <span className="truncate">{crumb.label}</span>
+                              </button>
+                            </BreadcrumbLink>
+                          )}
+                          {!isLast ? <BreadcrumbSeparator /> : null}
+                        </BreadcrumbItem>
+                      )
+                    })}
+                  </BreadcrumbList>
+                </Breadcrumb>
+              ) : (
+                <p className="truncate text-sm font-medium">
+                  {isLoadingRepo ? 'Loading repository…' : files.length === 0 ? 'No files yet' : 'No file selected'}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {recentCommits[0] ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="hidden h-7 items-center gap-2 px-2 text-xs sm:flex text-muted-foreground"
+                    >
+                      {recentCommits[0].authorAvatarUrl ? (
+                        <img
+                          src={recentCommits[0].authorAvatarUrl}
+                          alt={recentCommits[0].authorName}
+                          className="size-5 rounded-full"
+                        />
+                      ) : null}
+                      <span>{formatRelativeTime(recentCommits[0].date)}</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="bottom" sideOffset={6}>
+                    {recentCommits.map((commit) => (
+                      <DropdownMenuItem key={commit.sha} asChild>
+                        <a
+                          href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-2"
+                        >
+                          {commit.authorAvatarUrl ? (
+                            <img
+                              src={commit.authorAvatarUrl}
+                              alt={commit.authorName}
+                              className="size-4 rounded-full"
+                            />
+                          ) : null}
+                          <span className="text-sm">{formatRelativeTime(commit.date)}</span>
+                        </a>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem asChild>
+                      <a href={commitsUrl} target="_blank" rel="noreferrer">
+                        View all commits
+                      </a>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+              {authPending ? (
+                <span className="text-xs text-muted-foreground">Checking session...</span>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={() => void handleSave()}
+                disabled={!canSave}
+              >
+                Save
+                {isSaving ? <Loader2 className="ml-2 size-3.5 animate-spin" /> : null}
+                {!isSaving && canSave ? <Save className="ml-2 size-3.5" /> : null}
+                {!isSaving && !canSave ? <Check className="ml-2 size-3.5" /> : null}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 w-7 p-0"
+                    disabled={!selectedPath || !sha || isSaving}
+                  >
+                    <Ellipsis className="size-4" />
+                    <span className="sr-only">Page actions</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="bottom" sideOffset={6}>
+                  {fileUrl ? (
+                    <DropdownMenuItem asChild>
+                      <a href={fileUrl} target="_blank" rel="noreferrer">
+                        Open on GitHub
+                      </a>
+                    </DropdownMenuItem>
+                  ) : null}
+                  {fileUrl ? <DropdownMenuSeparator /> : null}
+                  <DropdownMenuItem onSelect={() => void handleRename()}>
+                    Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onSelect={() => void handleDelete()}>
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          {errorMessage ? (
+            <div className="border-b bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {errorMessage}
+            </div>
+          ) : null}
+
+          {!isAuthenticated ? (
+            <div className="grid flex-1 place-items-center text-muted-foreground">
+              Sign in with GitHub to edit content.
+            </div>
+          ) : isLoadingRepo ? (
+            <div className="flex flex-1 overflow-auto">
+              <div className="mx-auto w-2xl max-w-full px-6 pt-6">
+                <Skeleton className="h-12 w-full rounded-md" />
+                <div className="mt-4 space-y-2">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <Skeleton key={`content-skeleton-${index}`} className="h-5 w-full rounded-md" />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : files.length === 0 ? (
+            <div className="grid flex-1 place-items-center p-6">
+              <Empty className="max-w-md">
+                <EmptyHeader>
+                  <EmptyTitle>No pages yet</EmptyTitle>
+                  <EmptyDescription>This repository is empty. Create your first page to start editing.</EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button type="button" onClick={() => void handleCreate()}>
+                    Add a page
+                    <Plus />
+                  </Button>
+                </EmptyContent>
+              </Empty>
+            </div>
+          ) : !selectedPath ? (
+            <div className="grid flex-1 place-items-center text-muted-foreground">
+              Select a file from the left
+            </div>
+          ) : isLoadingFile ? (
+            <div className="flex flex-1 overflow-auto">
+              <div className="mx-auto w-2xl max-w-full px-6 pt-6">
+                <Skeleton className="h-12 w-full rounded-md" />
+                <div className="mt-4 space-y-2">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <Skeleton key={`file-loading-skeleton-${index}`} className="h-5 w-full rounded-md" />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+              <div ref={editorRegionRef} className="w-full pb-10">
+                {cover ? (
+                  <div className="group/cover relative w-full">
+                    <img
+                      src={cover}
+                      alt="Cover"
+                      className="h-64 w-full object-cover"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-3 right-3 h-7 px-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/cover:opacity-100"
+                      onClick={() => setCover('')}
+                    >
+                      Remove cover
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className={`group/title mx-auto w-2xl max-w-full px-6 ${cover ? '-mt-10 relative z-10' : 'pt-6'}`}>
+                  <div className="mb-2 h-7">
+                    <div className="flex h-7 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover/title:opacity-100 group-hover/title:pointer-events-auto group-focus-within/title:opacity-100 group-focus-within/title:pointer-events-auto">
+                      {!icon ? (
+                        <Popover
+                          open={isEmojiPopoverOpen}
+                          onOpenChange={(open) => {
+                            setIsEmojiPopoverOpen(open)
+                            if (!open) {
+                              setEmojiQuery('')
+                            }
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground">
+                              <SmilePlus className="size-4" />
+                              Add icon
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-80 p-2" align="start" sideOffset={8}>
+                            <div className="space-y-2">
+                              <Input
+                                value={emojiQuery}
+                                onChange={(event) => setEmojiQuery(event.target.value)}
+                                placeholder="Search emoji"
+                                className="h-8"
+                              />
+                              <ScrollArea className="h-40">
+                                <div className="grid grid-cols-8 gap-1 pr-2">
+                                  {filteredEmojiOptions.map((item) => (
+                                    <button
+                                      key={item.unicode}
+                                      type="button"
+                                      title={item.label}
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg hover:bg-accent"
+                                      onClick={() => handleSetIcon(item.unicode)}
+                                    >
+                                      {item.unicode}
+                                    </button>
+                                  ))}
+                                </div>
+                                {isEmojiSearchLoading && emojiQuery.trim() ? (
+                                  <p className="p-2 text-xs text-muted-foreground">Searching emojis…</p>
+                                ) : null}
+                                {filteredEmojiOptions.length === 0 ? (
+                                  <p className="p-2 text-xs text-muted-foreground">No emojis found.</p>
+                                ) : null}
+                              </ScrollArea>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      ) : null}
+
+                      {!cover ? (
+                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={handleSetCover}>
+                          <ImagePlus className="size-4" />
+                          Add cover
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {icon ? (
+                    <Popover
+                      open={isEmojiPopoverOpen}
+                      onOpenChange={(open) => {
+                        setIsEmojiPopoverOpen(open)
+                        if (!open) {
+                          setEmojiQuery('')
+                        }
+                      }}
+                    >
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="mb-2 inline-flex size-[78px] items-center justify-center rounded-lg text-6xl leading-none"
+                          aria-label="Change icon"
+                        >
+                          {icon}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-80 p-2" align="start" sideOffset={8}>
+                        <div className="space-y-2">
+                          <Input
+                            value={emojiQuery}
+                            onChange={(event) => setEmojiQuery(event.target.value)}
+                            placeholder="Search emoji"
+                            className="h-8"
+                          />
+                          <ScrollArea className="h-40">
+                            <div className="grid grid-cols-8 gap-1 pr-2">
+                              {filteredEmojiOptions.map((item) => (
+                                <button
+                                  key={item.unicode}
+                                  type="button"
+                                  title={item.label}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg hover:bg-accent"
+                                  onClick={() => handleSetIcon(item.unicode)}
+                                >
+                                  {item.unicode}
+                                </button>
+                              ))}
+                            </div>
+                            {isEmojiSearchLoading && emojiQuery.trim() ? (
+                              <p className="p-2 text-xs text-muted-foreground">Searching emojis…</p>
+                            ) : null}
+                            {filteredEmojiOptions.length === 0 ? (
+                              <p className="p-2 text-xs text-muted-foreground">No emojis found.</p>
+                            ) : null}
+                          </ScrollArea>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground"
+                            onClick={() => handleSetIcon('')}
+                          >
+                            Remove icon
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  ) : null}
+
+                  <input
+                    ref={titleInputRef}
+                    type="text"
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault()
+                        focusEditor()
+                      }
+                    }}
+                    placeholder="Title"
+                    className="w-full border-0 bg-transparent px-0 pt-1 pb-2 text-4xl font-extrabold tracking-tight text-balance leading-tight outline-none placeholder:text-muted-foreground focus:outline-none"
+                  />
+
+                  {titleMissing ? (
+                    <p className="pb-2 text-sm text-destructive">Title is required.</p>
+                  ) : null}
+                </div>
+
+                <div className="mx-auto w-2xl max-w-full px-6">
+                  <div className="flex-1 min-h-[280px]">
+                    <Editor
+                      className="cn-editor h-full"
+                      editorClassName="h-full min-h-full border-0 bg-transparent px-0 pt-2 pb-10 text-base leading-7 shadow-none focus-visible:ring-0 focus-visible:border-transparent"
+                      format="markdown"
+                      value={body}
+                      onChange={setBody}
+                      onArrowUpAtStart={focusTitleInput}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
+  )
+}
+
+function TreeView(props: {
+  root: FolderNode
+  expandedFolders: Set<string>
+  onToggleFolder: (path: string) => void
+  onSelectFile: (path: string) => void
+  selectedPath: string | null
+  fileSearch: string
+}) {
+  const fileMap = useMemo(() => {
+    const files = flattenFiles(props.root)
+    return new Map(files.map((file) => [file.path, file]))
+  }, [props.root])
+
+  const searchTerm = props.fileSearch.trim().toLowerCase()
+  const rootNode = {
+    ...props.root,
+    files: props.root.files.filter((file) => !file.path.includes('/')),
+    folders: props.root.folders,
+  }
+
+  return (
+    <SidebarMenu>
+      {renderFolderNode({
+        folder: rootNode,
+        depth: 0,
+        fileMap,
+        expandedFolders: props.expandedFolders,
+        onToggleFolder: props.onToggleFolder,
+        onSelectFile: props.onSelectFile,
+        selectedPath: props.selectedPath,
+        searchTerm,
+      })}
+    </SidebarMenu>
+  )
+}
+
+function renderFolderNode(args: {
+  folder: FolderNode
+  depth: number
+  fileMap: Map<string, MarkdownFile>
+  expandedFolders: Set<string>
+  onToggleFolder: (path: string) => void
+  onSelectFile: (path: string) => void
+  selectedPath: string | null
+  searchTerm: string
+}) {
+  const {
+    folder,
+    depth,
+    fileMap,
+    expandedFolders,
+    onToggleFolder,
+    onSelectFile,
+    selectedPath,
+    searchTerm,
+  } = args
+
+  const folderParentFiles = new Set(
+    folder.folders
+      .map((subfolder) => `${subfolder.path}.md`)
+      .filter((path) => fileMap.has(path)),
+  )
+
+  const visibleFiles = folder.files.filter((file) => !folderParentFiles.has(file.path))
+
+  const visibleFileItems = visibleFiles
+    .filter((file) => matchesSearch(file.path, searchTerm))
+    .map((file) => (
+      <SidebarMenuItem key={file.path}>
+        <SidebarMenuButton
+          isActive={selectedPath === file.path}
+          onClick={() => onSelectFile(file.path)}
+          className="[&>svg]:text-muted-foreground"
+          style={{ paddingLeft: `${depth * 14 + 8}px` }}
+        >
+          {!file.icon.trim() ? <FileText className="size-4 shrink-0" /> : null}
+          {file.icon.trim() ? (
+            <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+              {file.icon.trim()}
+            </span>
+          ) : null}
+          <span className="truncate">{entryTitle(file)}</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    ))
+
+  const folderItems = folder.folders
+    .map((subfolder) => {
+      const parentFilePath = `${subfolder.path}.md`
+      const parentFile = fileMap.get(parentFilePath)
+      const isExpanded = expandedFolders.has(subfolder.path)
+      const hasVisibleChild = hasMatchingChild(subfolder, searchTerm)
+      const parentMatches = parentFile ? matchesSearch(parentFile.path, searchTerm) : false
+
+      if (!hasVisibleChild && !parentMatches) {
+        return null
+      }
+
+      if (parentFile) {
+        return (
+          <div key={subfolder.path}>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={selectedPath === parentFile.path}
+                onClick={() => {
+                  onSelectFile(parentFile.path)
+                  if (!isExpanded) onToggleFolder(subfolder.path)
+                }}
+                className="[&>svg]:text-muted-foreground"
+                style={{ paddingLeft: `${depth * 14 + 8}px` }}
+              >
+                <span
+                  role="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onToggleFolder(subfolder.path)
+                  }}
+                  className="inline-flex size-4 items-center justify-center"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="size-3.5" />
+                  ) : (
+                    <ChevronRight className="size-3.5" />
+                  )}
+                </span>
+                {!parentFile.icon.trim() ? <FileText className="size-4 shrink-0" /> : null}
+                {parentFile.icon.trim() ? (
+                  <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+                    {parentFile.icon.trim()}
+                  </span>
+                ) : null}
+                <span className="truncate">{entryTitle(parentFile)}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            {isExpanded ? (
+              <div className="ml-2 border-l pl-1">
+                {renderFolderNode({
+                  folder: {
+                    ...subfolder,
+                    files: subfolder.files,
+                  },
+                  depth: depth + 1,
+                  fileMap,
+                  expandedFolders,
+                  onToggleFolder,
+                  onSelectFile,
+                  selectedPath,
+                  searchTerm,
+                })}
+              </div>
+            ) : null}
+          </div>
+        )
+      }
+
+      return (
+        <div key={subfolder.path}>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={() => onToggleFolder(subfolder.path)}
+              style={{ paddingLeft: `${depth * 14 + 8}px` }}
+            >
+              {isExpanded ? (
+                <ChevronDown className="size-3.5" />
+              ) : (
+                <ChevronRight className="size-3.5" />
+              )}
+              <span className="truncate">{subfolder.name}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {isExpanded
+            ? renderFolderNode({
+                folder: subfolder,
+                depth: depth + 1,
+                fileMap,
+                expandedFolders,
+                onToggleFolder,
+                onSelectFile,
+                selectedPath,
+                searchTerm,
+              })
+            : null}
+        </div>
+      )
+    })
+    .filter(Boolean)
+
+  return (
+    <>
+      {visibleFileItems}
+      {folderItems}
+    </>
+  )
+}
+
+function buildTree(files: MarkdownFile[]): FolderNode {
+  const root: FolderNode = {
+    path: '',
+    name: '',
+    files: [],
+    folders: [],
+  }
+
+  const folderMap = new Map<string, FolderNode>([['', root]])
+
+  const ensureFolder = (path: string) => {
+    if (folderMap.has(path)) return folderMap.get(path)!
+
+    const parentPath = dirname(path)
+    const parent = ensureFolder(parentPath)
+    const nextFolder: FolderNode = {
+      path,
+      name: basename(path),
+      files: [],
+      folders: [],
+    }
+    parent.folders.push(nextFolder)
+    folderMap.set(path, nextFolder)
+    return nextFolder
+  }
+
+  for (const file of files) {
+    const folderPath = dirname(file.path)
+    const folder = ensureFolder(folderPath)
+    folder.files.push(file)
+  }
+
+  const sortNode = (node: FolderNode) => {
+    node.files.sort((a, b) => a.path.localeCompare(b.path))
+    node.folders.sort((a, b) => a.path.localeCompare(b.path))
+    node.folders.forEach(sortNode)
+  }
+
+  sortNode(root)
+
+  root.files = files.filter((file) => !file.path.includes('/'))
+
+  return root
+}
+
+function dirname(path: string): string {
+  const index = path.lastIndexOf('/')
+  return index === -1 ? '' : path.slice(0, index)
+}
+
+function basename(path: string): string {
+  const index = path.lastIndexOf('/')
+  return index === -1 ? path : path.slice(index + 1)
+}
+
+function fileLabel(path: string): string {
+  return basename(path).replace(/\.md$/i, '')
+}
+
+function entryTitle(entry: MarkdownFile): string {
+  return entry.title.trim() || fileLabel(entry.path)
+}
+
+function toSlug(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-+|-+$)/g, '')
+}
+
+function expandParents(
+  path: string,
+  setExpandedFolders: Dispatch<SetStateAction<Set<string>>>,
+) {
+  const dirs = dirname(path).split('/').filter(Boolean)
+  const next = ['']
+
+  for (let index = 0; index < dirs.length; index++) {
+    next.push(dirs.slice(0, index + 1).join('/'))
+  }
+
+  setExpandedFolders((prev) => {
+    const merged = new Set(prev)
+    for (const dir of next) merged.add(dir)
+    return merged
+  })
+}
+
+function flattenFiles(folder: FolderNode): MarkdownFile[] {
+  return [...folder.files, ...folder.folders.flatMap(flattenFiles)]
+}
+
+function matchesSearch(path: string, searchTerm: string): boolean {
+  if (!searchTerm) return true
+  return path.toLowerCase().includes(searchTerm)
+}
+
+function hasMatchingChild(folder: FolderNode, searchTerm: string): boolean {
+  if (!searchTerm) return true
+  if (folder.files.some((file) => matchesSearch(file.path, searchTerm))) return true
+  return folder.folders.some((subfolder) => hasMatchingChild(subfolder, searchTerm))
+}
+
+function isUnsplashUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (
+      url.hostname === 'images.unsplash.com' ||
+      url.hostname === 'source.unsplash.com' ||
+      url.hostname.endsWith('.unsplash.com')
+    )
+  } catch {
+    return false
+  }
+}
+
+function normalizeBodyForCompare(value: string): string {
+  return value.replace(/\r\n/g, '\n').trimEnd()
+}
+
+function errorToMessage(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error)
+
+  if (text.includes('401') || text.toLowerCase().includes('unauthorized')) {
+    return 'Unauthorized. Sign in again and retry.'
+  }
+
+  if (text.includes('409') && text.toLowerCase().includes('git repository is empty')) {
+    return 'Repository is empty. Create the first file to start.'
+  }
+
+  if (text.includes('409')) {
+    return 'Save failed because the file changed upstream. Reload the file and try again.'
+  }
+
+  return text
+}
+
+function formatRelativeTime(input: string | null): string {
+  if (!input) return 'unknown'
+  const date = new Date(input)
+  const diffMs = Date.now() - date.getTime()
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  const minute = 60_000
+  const hour = 3_600_000
+  const day = 86_400_000
+
+  if (diffMs < minute) return 'just now'
+  if (diffMs < hour) return rtf.format(-Math.floor(diffMs / minute), 'minute')
+  if (diffMs < day) return rtf.format(-Math.floor(diffMs / hour), 'hour')
+  if (diffMs < 30 * day) return rtf.format(-Math.floor(diffMs / day), 'day')
+  return date.toLocaleDateString()
+}
