@@ -192,15 +192,16 @@ function SelectorPage() {
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const isAuthenticated = Boolean(authSession?.user)
-  const selectedOwnerItem = owners.find((item) => item.login === selectedOwner) ?? null
+  const installedOwners = useMemo(
+    () => owners.filter((item) => item.installationId !== null),
+    [owners],
+  )
+  const selectedOwnerItem = installedOwners.find((item) => item.login === selectedOwner) ?? null
   const shouldShowAppLoader = authPending && !hasResolvedHomeSessionOnce && !ownersCache
   const showOwnersBootstrapSkeleton =
     (authPending && owners.length === 0) || (isAuthenticated && isLoadingOwners && owners.length === 0)
 
-  const hasAnyInstallation = useMemo(
-    () => owners.some((item) => item.installationId !== null),
-    [owners],
-  )
+  const hasAnyInstallation = installedOwners.length > 0
 
   const addAccountInstallUrl = installUrl
 
@@ -221,7 +222,7 @@ function SelectorPage() {
   const applyOwners = (data: { owners: OwnerItem[]; viewerLogin: string; installUrl: string | null }) => {
     const fallback = data.owners.find((item) => item.installationId !== null) ?? data.owners[0]
     const nextSelectedOwner =
-      selectedOwner && data.owners.some((item) => item.login === selectedOwner)
+      selectedOwner && data.owners.some((item) => item.login === selectedOwner && item.installationId !== null)
         ? selectedOwner
         : fallback?.login || ''
 
@@ -432,10 +433,10 @@ function SelectorPage() {
           </div>
           )
         ) : !hasAnyInstallation ? (
-          <div className="rounded-md border px-3 py-4 text-sm">
+          <div className="flex h-[17.75rem] flex-col items-center justify-center gap-3 text-center text-sm">
             <p className="text-muted-foreground">App is not installed on your account yet.</p>
             {installUrl ? (
-              <a className="inline-block pt-2" href={installUrl}>
+              <a href={installUrl}>
                 <Button type="button" variant="default" size="sm">
                   Install the GitHub app
                 </Button>
@@ -463,7 +464,7 @@ function SelectorPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width)">
-                    {owners.map((owner) => (
+                    {installedOwners.map((owner) => (
                       <DropdownMenuItem key={`${owner.type}-${owner.login}`} onSelect={() => setSelectedOwner(owner.login)}>
                         <img src={`https://github.com/${owner.login}.png`} alt={owner.login} className="size-5 rounded-sm" />
                         <span className="min-w-0 flex-1 truncate">{owner.login}</span>
