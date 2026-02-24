@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn, useServerFn } from '@tanstack/react-start'
-import { ArrowBigDown, Check, ChevronsUpDown, Loader2, Lock, Search } from 'lucide-react'
+import { ArrowDown, Check, ChevronsUpDown, Loader2, Lock, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
 import { Button } from '#/components/ui/button'
@@ -386,7 +386,7 @@ function SelectorPage() {
         <div className="flex w-full max-w-64 flex-col gap-4">
           <div className="flex items-center gap-2 self-center font-medium">
             <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-              <ArrowBigDown className="size-4" />
+              <ArrowDown className="size-4" />
             </div>
             PullNotes
           </div>

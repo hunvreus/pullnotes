@@ -16,6 +16,7 @@ import {
   Search,
   SmilePlus,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
 import {
@@ -341,6 +342,7 @@ function App() {
   const [coverResults, setCoverResults] = useState<CoverPhoto[]>([])
   const [isCoverSearchLoading, setIsCoverSearchLoading] = useState(false)
   const [coverSearchError, setCoverSearchError] = useState<string | null>(null)
+  const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
 
   const owner = params.owner.trim()
   const repo = params.repo.trim()
@@ -481,11 +483,18 @@ function App() {
       }
     })
   }, [selectedPath, fileMap])
-  const childFiles = useMemo(() => {
-    if (!selectedPath) return []
-    const childrenDir = `${dirname(selectedPath) ? `${dirname(selectedPath)}/` : ''}${fileLabel(selectedPath)}`
-    return files.filter((file) => dirname(file.path) === childrenDir && file.path !== selectedPath)
-  }, [files, selectedPath])
+  const loadRecentCommits = async () => {
+    try {
+      const commits = await getRecentCommits({
+        data: {
+          target: activeTarget,
+        },
+      })
+      setRecentCommits(commits)
+    } catch {
+      setRecentCommits([])
+    }
+  }
 
   const refreshFiles = async (options?: { preferredPath?: string | null }) => {
     const nextFiles = await listFiles({
@@ -574,22 +583,14 @@ function App() {
 
   useEffect(() => {
     if (!isAuthenticated) return
-
-    const loadCommit = async () => {
-      try {
-        const commits = await getRecentCommits({
-          data: {
-            target: activeTarget,
-          },
-        })
-        setRecentCommits(commits)
-      } catch {
-        setRecentCommits([])
-      }
-    }
-
-    void loadCommit()
+    void loadRecentCommits()
   }, [isAuthenticated, activeTarget, getRecentCommits])
+
+  useEffect(() => {
+    if (!highlightedPath) return
+    const timeout = setTimeout(() => setHighlightedPath(null), 900)
+    return () => clearTimeout(timeout)
+  }, [highlightedPath])
 
   useEffect(() => {
     if (!selectedPath || !isAuthenticated) return
@@ -686,6 +687,17 @@ function App() {
     setErrorMessage(null)
   }
 
+  const showErrorToast = (toastId: string | number, message: string) => {
+    toast.error(message, {
+      id: toastId,
+      duration: 12000,
+      action: {
+        label: 'Dismiss',
+        onClick: () => toast.dismiss(toastId),
+      },
+    })
+  }
+
   const handleSave = async () => {
     if (!selectedPath) return
     const cleanTitle = title.trim()
@@ -696,6 +708,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Saving changes...')
 
     try {
       const result = await saveFile({
@@ -717,8 +730,12 @@ function App() {
       setSavedCover(cover)
       setSavedBody(body)
       await refreshFiles()
+      await loadRecentCommits()
+      toast.success('Saved', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -762,6 +779,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Creating page...')
 
     try {
       await saveFile({
@@ -778,8 +796,13 @@ function App() {
       await refreshFiles({ preferredPath: targetPath })
       setSelectedPathAndUrl(targetPath)
       expandParents(targetPath, setExpandedFolders)
+      setHighlightedPath(targetPath)
+      await loadRecentCommits()
+      toast.success('Page created', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -805,6 +828,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Creating child page...')
 
     try {
       await saveFile({
@@ -821,8 +845,13 @@ function App() {
       await refreshFiles({ preferredPath: targetPath })
       setSelectedPathAndUrl(targetPath)
       expandParents(targetPath, setExpandedFolders)
+      setHighlightedPath(targetPath)
+      await loadRecentCommits()
+      toast.success('Child page created', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -846,7 +875,7 @@ function App() {
 
   const handleSignOut = async () => {
     await authClient.signOut()
-    setSelectedPathAndUrl(null, true)
+    await navigate({ to: '/', replace: true })
   }
 
   const handleRename = async () => {
@@ -862,6 +891,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Renaming page...')
     try {
       await movePageWithChildren({
         oldPath: selectedPath,
@@ -871,8 +901,12 @@ function App() {
       remapSelectedPathAfterRename(selectedPath, nextPath)
       await refreshFiles({ preferredPath: nextPath })
       expandParents(nextPath, setExpandedFolders)
+      await loadRecentCommits()
+      toast.success('Page renamed', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -884,6 +918,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Deleting page...')
     try {
       await deleteFile({
         data: {
@@ -905,8 +940,12 @@ function App() {
       setSavedCover('')
       setSavedBody('')
       await refreshFiles()
+      await loadRecentCommits()
+      toast.success('Page deleted', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -924,6 +963,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Renaming page...')
     try {
       const loadedFile =
         selectedPath === path && hasLoadedFile && loadedPath === path && sha
@@ -943,8 +983,12 @@ function App() {
       remapSelectedPathAfterRename(path, nextPath)
       await refreshFiles({ preferredPath: nextPath })
       expandParents(nextPath, setExpandedFolders)
+      await loadRecentCommits()
+      toast.success('Page renamed', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -955,6 +999,7 @@ function App() {
 
     setIsSaving(true)
     setErrorMessage(null)
+    const toastId = toast.loading('Deleting page...')
     try {
       const loaded =
         selectedPath === path && hasLoadedFile && loadedPath === path && sha
@@ -989,8 +1034,12 @@ function App() {
         setSavedBody('')
       }
       await refreshFiles()
+      await loadRecentCommits()
+      toast.success('Page deleted', { id: toastId })
     } catch (error) {
-      setErrorMessage(errorToMessage(error))
+      const message = errorToMessage(error)
+      setErrorMessage(message)
+      showErrorToast(toastId, message)
     } finally {
       setIsSaving(false)
     }
@@ -1101,6 +1150,18 @@ function App() {
     )
   }
 
+  if (!isAuthenticated) {
+    void navigate({ to: '/', replace: true })
+    return (
+      <main className="grid min-h-screen place-items-center p-6">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          Redirecting...
+        </div>
+      </main>
+    )
+  }
+
   return (
     <SidebarProvider>
       <Sidebar>
@@ -1199,12 +1260,13 @@ function App() {
                   onToggleFolder={toggleFolder}
                   onSelectFile={(path) => setSelectedPathAndUrl(path)}
                   selectedPath={selectedPath}
-                fileSearch={filterQuery}
-                onCreateChild={(path) => void handleCreateChild(path)}
-                onRename={(path) => void handleRenamePath(path)}
-                onDelete={(path) => void handleDeletePath(path)}
-                toFileUrl={toFileUrl}
-              />
+                  highlightedPath={highlightedPath}
+                  fileSearch={filterQuery}
+                  onCreateChild={(path) => void handleCreateChild(path)}
+                  onRename={(path) => void handleRenamePath(path)}
+                  onDelete={(path) => void handleDeletePath(path)}
+                  toFileUrl={toFileUrl}
+                />
             )}
           </SidebarGroup>
         </SidebarContent>
@@ -1270,157 +1332,159 @@ function App() {
 
       <SidebarInset>
         <div className="flex min-h-svh flex-col">
-          <div className="sticky top-0 z-20 flex h-12 items-center justify-between bg-background px-4">
-            <div className="flex min-w-0 items-center gap-2">
-              <SidebarTrigger className="md:hidden" />
-              <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4 md:hidden" />
-              {selectedPath ? (
-                <Breadcrumb>
-                  <BreadcrumbList className="gap-1 text-sm">
-                    {breadcrumbs.map((crumb, index) => {
-                      const isLast = index === breadcrumbs.length - 1
-                      return (
-                        <BreadcrumbItem key={crumb.path} className="min-w-0">
-                          {isLast ? (
-                            <BreadcrumbPage className="flex min-w-0 items-center gap-1">
-                              {crumb.icon ? (
-                                <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
-                                  {crumb.icon}
-                                </span>
-                              ) : null}
-                              <span className="truncate">{crumb.label}</span>
-                            </BreadcrumbPage>
-                          ) : (
-                            <BreadcrumbLink asChild>
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedPathAndUrl(crumb.path)}
-                                  className="flex min-w-0 items-center gap-1"
-                                >
+          {isLoadingRepo || files.length > 0 ? (
+            <div className="sticky top-0 z-20 flex h-12 items-center justify-between bg-background px-4">
+              <div className="flex min-w-0 items-center gap-2">
+                <SidebarTrigger className="md:hidden" />
+                <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4 md:hidden" />
+                {selectedPath ? (
+                  <Breadcrumb>
+                    <BreadcrumbList className="gap-1 text-sm">
+                      {breadcrumbs.map((crumb, index) => {
+                        const isLast = index === breadcrumbs.length - 1
+                        return (
+                          <BreadcrumbItem key={crumb.path} className="min-w-0">
+                            {isLast ? (
+                              <BreadcrumbPage className="flex min-w-0 items-center gap-1">
                                 {crumb.icon ? (
                                   <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
                                     {crumb.icon}
                                   </span>
                                 ) : null}
                                 <span className="truncate">{crumb.label}</span>
-                              </button>
-                            </BreadcrumbLink>
-                          )}
-                          {!isLast ? <BreadcrumbSeparator /> : null}
-                        </BreadcrumbItem>
-                      )
-                    })}
-                  </BreadcrumbList>
-                </Breadcrumb>
-              ) : (
-                <p className="truncate text-sm font-medium">
-                  {isLoadingRepo ? <Skeleton className="h-5 w-30 rounded-md" /> : files.length === 0 ? 'No files yet' : 'No file selected'}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {recentCommits[0] ? (
+                              </BreadcrumbPage>
+                            ) : (
+                              <BreadcrumbLink asChild>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedPathAndUrl(crumb.path)}
+                                    className="flex min-w-0 items-center gap-1"
+                                  >
+                                  {crumb.icon ? (
+                                    <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+                                      {crumb.icon}
+                                    </span>
+                                  ) : null}
+                                  <span className="truncate">{crumb.label}</span>
+                                </button>
+                              </BreadcrumbLink>
+                            )}
+                            {!isLast ? <BreadcrumbSeparator /> : null}
+                          </BreadcrumbItem>
+                        )
+                      })}
+                    </BreadcrumbList>
+                  </Breadcrumb>
+                ) : (
+                  <p className="truncate text-sm font-medium">
+                    {isLoadingRepo ? <Skeleton className="h-5 w-30 rounded-md" /> : 'No file selected'}
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {recentCommits[0] ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="hidden h-7 items-center gap-2 px-2 text-xs sm:flex text-muted-foreground"
+                      >
+                        {recentCommits[0].authorAvatarUrl ? (
+                          <img
+                            src={recentCommits[0].authorAvatarUrl}
+                            alt={recentCommits[0].authorName}
+                            className="size-5 rounded-full"
+                          />
+                        ) : null}
+                        <span>{formatRelativeTime(recentCommits[0].date)}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" side="bottom" sideOffset={6}>
+                      {recentCommits.map((commit) => (
+                        <DropdownMenuItem key={commit.sha} asChild>
+                          <a
+                            href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-2"
+                          >
+                            {commit.authorAvatarUrl ? (
+                              <img
+                                src={commit.authorAvatarUrl}
+                                alt={commit.authorName}
+                                className="size-4 rounded-full"
+                              />
+                            ) : null}
+                            <span className="text-sm">{formatRelativeTime(commit.date)}</span>
+                          </a>
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem asChild>
+                        <a href={commitsUrl} target="_blank" rel="noreferrer">
+                          View all commits
+                        </a>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => void handleSave()}
+                  disabled={!canSave}
+                >
+                  Save
+                  {isSaving ? <Loader2 className="ml-2 size-3.5 animate-spin" /> : null}
+                  {!isSaving && canSave ? <Save className="ml-2 size-3.5" /> : null}
+                  {!isSaving && !canSave ? <Check className="ml-2 size-3.5" /> : null}
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
-                      variant="ghost"
                       size="sm"
-                      className="hidden h-7 items-center gap-2 px-2 text-xs sm:flex text-muted-foreground"
+                      variant="outline"
+                      className="h-7 w-7 p-0"
+                      disabled={!selectedPath || !sha || isSaving}
                     >
-                      {recentCommits[0].authorAvatarUrl ? (
-                        <img
-                          src={recentCommits[0].authorAvatarUrl}
-                          alt={recentCommits[0].authorName}
-                          className="size-5 rounded-full"
-                        />
-                      ) : null}
-                      <span>{formatRelativeTime(recentCommits[0].date)}</span>
+                      <Ellipsis className="size-4" />
+                      <span className="sr-only">Page actions</span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" side="bottom" sideOffset={6}>
-                    {recentCommits.map((commit) => (
-                      <DropdownMenuItem key={commit.sha} asChild>
-                        <a
-                          href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-2"
-                        >
-                          {commit.authorAvatarUrl ? (
-                            <img
-                              src={commit.authorAvatarUrl}
-                              alt={commit.authorName}
-                              className="size-4 rounded-full"
-                            />
-                          ) : null}
-                          <span className="text-sm">{formatRelativeTime(commit.date)}</span>
+                    {fileUrl ? (
+                      <DropdownMenuItem asChild>
+                        <a href={fileUrl} target="_blank" rel="noreferrer">
+                          Open on GitHub
+                          <DropdownMenuShortcut>
+                            <ExternalLink className="size-3.5" />
+                          </DropdownMenuShortcut>
                         </a>
                       </DropdownMenuItem>
-                    ))}
+                    ) : null}
+                    {fileUrl ? <DropdownMenuSeparator /> : null}
+                    {selectedPath ? (
+                      <DropdownMenuItem onSelect={() => void handleCreateChild(selectedPath)}>
+                        Add child
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem onSelect={() => void handleRename()}>
+                      Rename
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem asChild>
-                      <a href={commitsUrl} target="_blank" rel="noreferrer">
-                        View all commits
-                      </a>
+                    <DropdownMenuItem variant="destructive" onSelect={() => void handleDelete()}>
+                      Delete
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-xs"
-                onClick={() => void handleSave()}
-                disabled={!canSave}
-              >
-                Save
-                {isSaving ? <Loader2 className="ml-2 size-3.5 animate-spin" /> : null}
-                {!isSaving && canSave ? <Save className="ml-2 size-3.5" /> : null}
-                {!isSaving && !canSave ? <Check className="ml-2 size-3.5" /> : null}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 w-7 p-0"
-                    disabled={!selectedPath || !sha || isSaving}
-                  >
-                    <Ellipsis className="size-4" />
-                    <span className="sr-only">Page actions</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" side="bottom" sideOffset={6}>
-                  {fileUrl ? (
-                    <DropdownMenuItem asChild>
-                      <a href={fileUrl} target="_blank" rel="noreferrer">
-                        Open on GitHub
-                        <DropdownMenuShortcut>
-                          <ExternalLink className="size-3.5" />
-                        </DropdownMenuShortcut>
-                      </a>
-                    </DropdownMenuItem>
-                  ) : null}
-                  {fileUrl ? <DropdownMenuSeparator /> : null}
-                  {selectedPath ? (
-                    <DropdownMenuItem onSelect={() => void handleCreateChild(selectedPath)}>
-                      Add child
-                    </DropdownMenuItem>
-                  ) : null}
-                  <DropdownMenuItem onSelect={() => void handleRename()}>
-                    Rename
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => void handleDelete()}>
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="flex min-h-0 flex-1 flex-col">
             {errorMessage ? (
@@ -1757,23 +1821,6 @@ function App() {
                     />
                   </div>
                 </div>
-                {childFiles.length > 0 ? (
-                  <div className="mx-auto w-2xl max-w-full px-6 pt-2">
-                    <h3 className="text-sm font-medium text-muted-foreground">Children</h3>
-                    <div className="mt-2 space-y-1 pb-8">
-                      {childFiles.map((child) => (
-                        <button
-                          key={child.path}
-                          type="button"
-                          className="flex h-8 w-full items-center rounded-md border px-2 text-left text-sm hover:bg-muted"
-                          onClick={() => setSelectedPathAndUrl(child.path)}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{entryTitle(child)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </div>
               </div>
             )}
@@ -1790,6 +1837,7 @@ function TreeView(props: {
   onToggleFolder: (path: string) => void
   onSelectFile: (path: string) => void
   selectedPath: string | null
+  highlightedPath: string | null
   fileSearch: string
   onCreateChild: (path: string) => void
   onRename: (path: string) => void
@@ -1818,6 +1866,7 @@ function TreeView(props: {
         onToggleFolder: props.onToggleFolder,
         onSelectFile: props.onSelectFile,
         selectedPath: props.selectedPath,
+        highlightedPath: props.highlightedPath,
         searchTerm,
         onCreateChild: props.onCreateChild,
         onRename: props.onRename,
@@ -1836,6 +1885,7 @@ function renderFolderNode(args: {
   onToggleFolder: (path: string) => void
   onSelectFile: (path: string) => void
   selectedPath: string | null
+  highlightedPath: string | null
   searchTerm: string
   onCreateChild: (path: string) => void
   onRename: (path: string) => void
@@ -1850,6 +1900,7 @@ function renderFolderNode(args: {
     onToggleFolder,
     onSelectFile,
     selectedPath,
+    highlightedPath,
     searchTerm,
     onCreateChild,
     onRename,
@@ -1878,7 +1929,9 @@ function renderFolderNode(args: {
               onToggleFolder(subfolder.path)
             }
           }}
-          className="[&>svg]:text-muted-foreground hover:[&_[data-tree-icon=default]]:opacity-0 hover:[&_[data-tree-icon=chevron]]:opacity-100"
+          className={`[&>svg]:text-muted-foreground hover:[&_[data-tree-icon=default]]:opacity-0 hover:[&_[data-tree-icon=chevron]]:opacity-100 transition-colors ${
+            highlightedPath === file.path ? 'bg-sidebar-accent/60' : ''
+          }`}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
         >
           {subfolderByParentFilePath.has(file.path) ? (
@@ -1958,6 +2011,7 @@ function renderFolderNode(args: {
                 onToggleFolder,
                 onSelectFile,
                 selectedPath,
+                highlightedPath,
                 searchTerm,
                 onCreateChild,
                 onRename,
@@ -2004,6 +2058,7 @@ function renderFolderNode(args: {
                 onToggleFolder,
                 onSelectFile,
                 selectedPath,
+                highlightedPath,
                 searchTerm,
                 onCreateChild,
                 onRename,
