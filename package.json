@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "node scripts/dev-start.mjs",
     "build": "vite build",
-    "start": "node dist/server/server.js",
+    "start": "node scripts/start-server.mjs",
     "preview": "vite preview",
     "setup": "node scripts/setup-github-app.mjs",
     "auth:migrate": "node scripts/auth-migrate.mjs",
