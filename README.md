@@ -51,7 +51,7 @@ cp .env.example .env
 - Better Auth:
   - `BETTER_AUTH_SECRET`
   - `BETTER_AUTH_URL` (for local: `http://localhost:4000` by default)
-  - `AUTH_DB_PATH` (for local sqlite file)
+  - `DB_PATH` (for local sqlite file)
 - GitHub App:
   - `GITHUB_APP_ID`
   - `GITHUB_APP_NAME`

@@ -78,6 +78,7 @@ import { requireSession } from '#/lib/session'
 
 type RouteSearch = {
   root?: string
+  file?: string
 }
 
 type MarkdownFile = RepoMarkdownMetaEntry
@@ -280,6 +281,7 @@ export const Route = createFileRoute('/$owner/$repo/$branch')({
 
     return {
       root: typeof raw.root === 'string' ? raw.root : undefined,
+      file: typeof raw.file === 'string' ? raw.file : undefined,
     }
   },
   loader: async () => [],
@@ -344,11 +346,26 @@ function App() {
   const repo = params.repo.trim()
   const branch = params.branch.trim()
   const rootPath = (routeSearch.root || '').replace(/^\/+|\/+$/g, '')
+  const filePathFromSearch =
+    typeof routeSearch.file === 'string'
+      ? routeSearch.file.replace(/^\/+|\/+$/g, '').trim() || null
+      : null
 
   const activeTarget = useMemo(
     () => ({ owner, repo, branch, rootPath }),
     [owner, repo, branch, rootPath],
   )
+
+  const setSelectedPathAndUrl = (nextPath: string | null, replace = false) => {
+    setSelectedPath(nextPath)
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        file: nextPath || undefined,
+      }),
+      replace,
+    })
+  }
 
   const tree = useMemo(() => buildTree(files), [files])
   const fileMap = useMemo(() => new Map(files.map((file) => [file.path, file])), [files])
@@ -470,7 +487,7 @@ function App() {
     return files.filter((file) => dirname(file.path) === childrenDir && file.path !== selectedPath)
   }, [files, selectedPath])
 
-  const refreshFiles = async () => {
+  const refreshFiles = async (options?: { preferredPath?: string | null }) => {
     const nextFiles = await listFiles({
       data: {
         target: activeTarget,
@@ -478,15 +495,42 @@ function App() {
     })
 
     setFiles(nextFiles)
+    const nextPaths = new Set(nextFiles.map((file) => file.path))
+    const preferredPath = options?.preferredPath ?? null
 
-    if (!selectedPath && nextFiles[0]) {
-      setSelectedPath(nextFiles[0].path)
+    if (preferredPath && nextPaths.has(preferredPath)) {
+      if (selectedPath !== preferredPath) {
+        setSelectedPathAndUrl(preferredPath, true)
+      }
+      return
+    }
+
+    if (filePathFromSearch && nextPaths.has(filePathFromSearch)) {
+      if (selectedPath !== filePathFromSearch) {
+        setSelectedPath(filePathFromSearch)
+      }
+      return
+    }
+
+    if (selectedPath && nextPaths.has(selectedPath)) return
+
+    if (nextFiles[0]) {
+      setSelectedPathAndUrl(nextFiles[0].path, true)
+      return
+    }
+
+    if (selectedPath || filePathFromSearch) {
+      setSelectedPathAndUrl(null, true)
     }
   }
 
   useEffect(() => {
+    setSelectedPath(filePathFromSearch)
+  }, [filePathFromSearch])
+
+  useEffect(() => {
     setFiles([])
-    setSelectedPath(null)
+    setSelectedPathAndUrl(null, true)
     setTitle('')
     setBody('')
     setIcon('')
@@ -506,7 +550,7 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) {
       setFiles([])
-      setSelectedPath(null)
+      setSelectedPathAndUrl(null, true)
       setIsLoadingRepo(false)
       return
     }
@@ -731,8 +775,8 @@ function App() {
         },
       })
 
-      await refreshFiles()
-      setSelectedPath(targetPath)
+      await refreshFiles({ preferredPath: targetPath })
+      setSelectedPathAndUrl(targetPath)
       expandParents(targetPath, setExpandedFolders)
     } catch (error) {
       setErrorMessage(errorToMessage(error))
@@ -774,8 +818,8 @@ function App() {
         },
       })
 
-      await refreshFiles()
-      setSelectedPath(targetPath)
+      await refreshFiles({ preferredPath: targetPath })
+      setSelectedPathAndUrl(targetPath)
       expandParents(targetPath, setExpandedFolders)
     } catch (error) {
       setErrorMessage(errorToMessage(error))
@@ -802,7 +846,7 @@ function App() {
 
   const handleSignOut = async () => {
     await authClient.signOut()
-    setSelectedPath(null)
+    setSelectedPathAndUrl(null, true)
   }
 
   const handleRename = async () => {
@@ -819,25 +863,13 @@ function App() {
     setIsSaving(true)
     setErrorMessage(null)
     try {
-      await saveFile({
-        data: {
-          target: activeTarget,
-          path: nextPath,
-          title,
-          icon,
-          cover,
-          body,
-        },
+      await movePageWithChildren({
+        oldPath: selectedPath,
+        newPath: nextPath,
+        oldFile: { sha, title, icon, cover, body },
       })
-      await deleteFile({
-        data: {
-          target: activeTarget,
-          path: selectedPath,
-          sha,
-        },
-      })
-      setSelectedPath(nextPath)
-      await refreshFiles()
+      remapSelectedPathAfterRename(selectedPath, nextPath)
+      await refreshFiles({ preferredPath: nextPath })
       expandParents(nextPath, setExpandedFolders)
     } catch (error) {
       setErrorMessage(errorToMessage(error))
@@ -860,7 +892,7 @@ function App() {
           sha,
         },
       })
-      setSelectedPath(null)
+      setSelectedPathAndUrl(null, true)
       setTitle('')
       setIcon('')
       setCover('')
@@ -893,9 +925,9 @@ function App() {
     setIsSaving(true)
     setErrorMessage(null)
     try {
-      const loaded =
+      const loadedFile =
         selectedPath === path && hasLoadedFile && loadedPath === path && sha
-          ? { path, sha, title, icon, cover, body }
+          ? { sha, title, icon, cover, body }
           : await getFile({
               data: {
                 target: activeTarget,
@@ -903,28 +935,13 @@ function App() {
               },
             })
 
-      await saveFile({
-        data: {
-          target: activeTarget,
-          path: nextPath,
-          title: loaded.title,
-          icon: loaded.icon,
-          cover: loaded.cover,
-          body: loaded.body,
-        },
+      await movePageWithChildren({
+        oldPath: path,
+        newPath: nextPath,
+        oldFile: loadedFile,
       })
-      await deleteFile({
-        data: {
-          target: activeTarget,
-          path,
-          sha: loaded.sha,
-        },
-      })
-
-      if (selectedPath === path) {
-        setSelectedPath(nextPath)
-      }
-      await refreshFiles()
+      remapSelectedPathAfterRename(path, nextPath)
+      await refreshFiles({ preferredPath: nextPath })
       expandParents(nextPath, setExpandedFolders)
     } catch (error) {
       setErrorMessage(errorToMessage(error))
@@ -958,7 +975,7 @@ function App() {
       })
 
       if (selectedPath === path) {
-        setSelectedPath(null)
+        setSelectedPathAndUrl(null, true)
         setTitle('')
         setIcon('')
         setCover('')
@@ -976,6 +993,100 @@ function App() {
       setErrorMessage(errorToMessage(error))
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const childDirFor = (path: string) =>
+    `${dirname(path) ? `${dirname(path)}/` : ''}${fileLabel(path)}`
+
+  const childPathsFor = (path: string) => {
+    const dir = childDirFor(path)
+    const prefix = `${dir}/`
+    return files
+      .map((file) => file.path)
+      .filter((filePath) => filePath.startsWith(prefix))
+  }
+
+  const remapSelectedPathAfterRename = (oldPath: string, newPath: string) => {
+    if (!selectedPath) return
+    if (selectedPath === oldPath) {
+      setSelectedPathAndUrl(newPath)
+      return
+    }
+
+    const oldDir = childDirFor(oldPath)
+    const newDir = childDirFor(newPath)
+    const prefix = `${oldDir}/`
+    if (selectedPath.startsWith(prefix)) {
+      const suffix = selectedPath.slice(prefix.length)
+      setSelectedPathAndUrl(`${newDir}/${suffix}`)
+    }
+  }
+
+  const movePageWithChildren = async (input: {
+    oldPath: string
+    newPath: string
+    oldFile: {
+      sha: string
+      title: string
+      icon: string
+      cover: string
+      body: string
+    }
+  }) => {
+    const oldDir = childDirFor(input.oldPath)
+    const newDir = childDirFor(input.newPath)
+    const childPaths = childPathsFor(input.oldPath)
+    const childFiles = await Promise.all(
+      childPaths.map((path) =>
+        getFile({
+          data: {
+            target: activeTarget,
+            path,
+          },
+        }),
+      ),
+    )
+
+    await saveFile({
+      data: {
+        target: activeTarget,
+        path: input.newPath,
+        title: input.oldFile.title,
+        icon: input.oldFile.icon,
+        cover: input.oldFile.cover,
+        body: input.oldFile.body,
+      },
+    })
+
+    for (const child of childFiles) {
+      const suffix = child.path.slice(`${oldDir}/`.length)
+      const nextChildPath = `${newDir}/${suffix}`
+      await saveFile({
+        data: {
+          target: activeTarget,
+          path: nextChildPath,
+          title: child.title,
+          icon: child.icon,
+          cover: child.cover,
+          body: child.body,
+        },
+      })
+    }
+
+    const deletes = [
+      { path: input.oldPath, sha: input.oldFile.sha },
+      ...childFiles.map((child) => ({ path: child.path, sha: child.sha })),
+    ].sort((a, b) => b.path.length - a.path.length)
+
+    for (const item of deletes) {
+      await deleteFile({
+        data: {
+          target: activeTarget,
+          path: item.path,
+          sha: item.sha,
+        },
+      })
     }
   }
 
@@ -1082,12 +1193,12 @@ function App() {
                 ))}
               </div>
             ) : (
-              <TreeView
-                root={tree}
-                expandedFolders={expandedFolders}
-                onToggleFolder={toggleFolder}
-                onSelectFile={setSelectedPath}
-                selectedPath={selectedPath}
+                <TreeView
+                  root={tree}
+                  expandedFolders={expandedFolders}
+                  onToggleFolder={toggleFolder}
+                  onSelectFile={(path) => setSelectedPathAndUrl(path)}
+                  selectedPath={selectedPath}
                 fileSearch={filterQuery}
                 onCreateChild={(path) => void handleCreateChild(path)}
                 onRename={(path) => void handleRenamePath(path)}
@@ -1181,11 +1292,11 @@ function App() {
                             </BreadcrumbPage>
                           ) : (
                             <BreadcrumbLink asChild>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedPath(crumb.path)}
-                                className="flex min-w-0 items-center gap-1"
-                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPathAndUrl(crumb.path)}
+                                  className="flex min-w-0 items-center gap-1"
+                                >
                                 {crumb.icon ? (
                                   <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
                                     {crumb.icon}
@@ -1203,7 +1314,7 @@ function App() {
                 </Breadcrumb>
               ) : (
                 <p className="truncate text-sm font-medium">
-                  {isLoadingRepo ? 'Loading repository…' : files.length === 0 ? 'No files yet' : 'No file selected'}
+                  {isLoadingRepo ? <Skeleton className="h-5 w-30 rounded-md" /> : files.length === 0 ? 'No files yet' : 'No file selected'}
                 </p>
               )}
             </div>
@@ -1655,7 +1766,7 @@ function App() {
                           key={child.path}
                           type="button"
                           className="flex h-8 w-full items-center rounded-md border px-2 text-left text-sm hover:bg-muted"
-                          onClick={() => setSelectedPath(child.path)}
+                          onClick={() => setSelectedPathAndUrl(child.path)}
                         >
                           <span className="min-w-0 flex-1 truncate">{entryTitle(child)}</span>
                         </button>

@@ -4,7 +4,7 @@ import Database from 'better-sqlite3'
 import { betterAuth } from 'better-auth'
 import { tanstackStartCookies } from 'better-auth/tanstack-start'
 
-const authDbPath = resolve(process.cwd(), process.env.AUTH_DB_PATH ?? './data/auth.db')
+const authDbPath = resolve(process.cwd(), process.env.DB_PATH ?? './data/auth.db')
 mkdirSync(dirname(authDbPath), { recursive: true })
 
 const db = new Database(authDbPath)

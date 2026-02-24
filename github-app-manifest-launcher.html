@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitHub App Setup</title>
+  </head>
+  <body>
+    <form id="manifest-form" method="post" action="https://github.com/settings/apps/new?state=d0273ad0f13543a0a10bfd64f5d7ba8b">
+      <input type="hidden" name="manifest" value="{&quot;name&quot;:&quot;PullNotes&quot;,&quot;url&quot;:&quot;https://pullnotes.com&quot;,&quot;callback_urls&quot;:[&quot;https://pullnotes.com/api/auth/callback/github&quot;],&quot;redirect_url&quot;:&quot;https://pullnotes.com/api/auth/callback/github&quot;,&quot;description&quot;:&quot;Simple markdown editor powered by GitHub.&quot;,&quot;public&quot;:false,&quot;default_permissions&quot;:{&quot;contents&quot;:&quot;write&quot;,&quot;metadata&quot;:&quot;read&quot;},&quot;request_oauth_on_install&quot;:false,&quot;setup_on_update&quot;:true,&quot;setup_url&quot;:&quot;https://pullnotes.com/api/github-app/callback&quot;}" />
+      <noscript>
+        <p>JavaScript is disabled. Click continue.</p>
+        <button type="submit">Continue</button>
+      </noscript>
+    </form>
+    <script>
+      document.getElementById('manifest-form').submit();
+    </script>
+  </body>
+</html>

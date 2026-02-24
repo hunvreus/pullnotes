@@ -47,26 +47,9 @@ async function main() {
     process.env.BETTER_AUTH_URL ||
     (profile === 'local' ? 'http://localhost:4000' : 'https://example.com')
 
-  const defaultMode =
-    args.mode ||
-    (profile === 'local' && !process.env.SSH_CONNECTION ? 'local' : 'manual')
-
-  const mode = await askSelect({
-    message: 'GitHub App creation flow',
-    initialValue: defaultMode,
-    options: [
-      {
-        value: 'local',
-        label: 'Auto callback capture',
-        hint: 'runs local listener and captures code automatically',
-      },
-      {
-        value: 'manual',
-        label: 'Manual code paste',
-        hint: 'works well on servers/headless environments',
-      },
-    ],
-  })
+  const baseUrl = trimSlash(
+    await askText('App base URL', defaultBaseUrl, true),
+  )
 
   const ownerType = await askSelect({
     message: 'Create GitHub App under',
@@ -82,7 +65,6 @@ async function main() {
       ? await askText('Organization slug', args.org || '', true)
       : ''
 
-  const baseUrl = trimSlash(defaultBaseUrl)
   const appName = (args.appName || 'PullNotes').trim()
 
   const authCallbackUrl = `${baseUrl}/api/auth/callback/github`
@@ -114,27 +96,22 @@ async function main() {
   const s = spinner()
   s.start('Launching GitHub App manifest flow')
 
-  let code
-  if (mode === 'local') {
-    const host = '127.0.0.1'
-    const port = Number(args.port || 8787)
-    const setupCallbackUrl = `http://${host}:${port}/callback`
+  const host = '127.0.0.1'
+  const port = Number(args.port || 8787)
+  const setupCallbackUrl = `http://${host}:${port}/api/github-app/callback`
 
-    code = await runLocalFlow({
-      host,
-      port,
-      appCreationUrl,
-      state,
-      manifest: {
-        ...manifest,
-        // This callback is only for manifest conversion code capture in setup.
-        redirect_url: setupCallbackUrl,
-      },
-      autoOpen: args.open,
-    })
-  } else {
-    code = await runManualFlow({ appCreationUrl, state, manifest })
-  }
+  const code = await runLocalFlow({
+    host,
+    port,
+    appCreationUrl,
+    state,
+    manifest: {
+      ...manifest,
+      // This callback is only for manifest conversion code capture in setup.
+      redirect_url: setupCallbackUrl,
+    },
+    autoOpen: args.open,
+  })
   s.stop('Received temporary manifest code')
 
   s.start('Converting manifest code via GitHub API')
@@ -146,7 +123,7 @@ async function main() {
     BETTER_AUTH_URL: baseUrl,
     BETTER_AUTH_SECRET:
       process.env.BETTER_AUTH_SECRET || randomBytes(32).toString('base64url'),
-    AUTH_DB_PATH: process.env.AUTH_DB_PATH || './data/auth.db',
+    DB_PATH: process.env.DB_PATH || './data/auth.db',
     GITHUB_APP_ID: String(converted.id),
     GITHUB_APP_NAME: converted.slug,
     GITHUB_APP_CLIENT_ID: converted.client_id,
@@ -167,7 +144,12 @@ async function main() {
     'Completed',
   )
 
-  outro('Next: install app on your repo/account, run `pnpm auth:migrate`, then `pnpm dev`.')
+  const nextStepMessage =
+    profile === 'remote'
+      ? 'Next: install app on your repo/account, set production env/secrets, then deploy.'
+      : 'Next: install app on your repo/account, then run `pnpm dev`.'
+
+  outro(nextStepMessage)
 }
 
 main().catch((error) => {
@@ -290,22 +272,6 @@ async function runLocalFlow({ host, port, appCreationUrl, state, manifest, autoO
   }
 }
 
-async function runManualFlow({ appCreationUrl, state, manifest }) {
-  const launcherPath = resolve(process.cwd(), 'github-app-manifest-launcher.html')
-  writeFileSync(launcherPath, renderAutoPostPage({ appCreationUrl, manifest }), 'utf8')
-
-  note(
-    [
-      `Open this file in a browser: ${launcherPath}`,
-      'Complete GitHub App creation and copy `code` (or `temporary_code`) from callback URL.',
-      `Expected state: ${state}`,
-    ].join('\n'),
-    'Manual flow',
-  )
-
-  return askText('Paste temporary code', '', true)
-}
-
 function renderAutoPostPage({ appCreationUrl, manifest }) {
   const escapedAction = escapeHtml(appCreationUrl)
   const escapedManifest = escapeHtml(JSON.stringify(manifest))
@@ -395,7 +361,6 @@ function inferProfile() {
 function parseArgs(argv) {
   const result = {
     help: false,
-    mode: '',
     profile: '',
     port: '',
     envPath: '',
@@ -409,7 +374,6 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--help' || arg === '-h') result.help = true
-    else if (arg === '--mode') result.mode = argv[++i] || ''
     else if (arg === '--profile') result.profile = argv[++i] || ''
     else if (arg === '--port') result.port = argv[++i] || ''
     else if (arg === '--env') result.envPath = argv[++i] || ''
@@ -424,7 +388,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`GitHub App setup helper\n\nUsage:\n  node scripts/setup-github-app.mjs [options]\n\nOptions:\n  --profile <local|remote> Environment profile preset\n  --mode <local|manual>    Manifest flow mode\n  --port <number>          Local callback port (default: 8787)\n  --env <path>             Env file path (default: .env)\n  --base-url <url>         App base URL\n  --app-name <name>        GitHub App display name\n  --owner-type <type>      personal or org\n  --org <slug>             Organization slug when owner-type=org\n  --no-open                Do not try to open browser automatically\n  -h, --help               Show help\n`)
+  console.log(`GitHub App setup helper\n\nUsage:\n  node scripts/setup-github-app.mjs [options]\n\nOptions:\n  --profile <local|remote> Environment profile preset\n  --port <number>          Local callback port (default: 8787)\n  --env <path>             Env file path (default: .env)\n  --base-url <url>         App base URL\n  --app-name <name>        GitHub App display name\n  --owner-type <type>      personal or org\n  --org <slug>             Organization slug when owner-type=org\n  --no-open                Do not try to open browser automatically\n  -h, --help               Show help\n`)
 }
 
 function trimSlash(value) {
