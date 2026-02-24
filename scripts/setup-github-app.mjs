@@ -86,6 +86,7 @@ async function main() {
   const appName = (args.appName || 'PullNotes').trim()
 
   const authCallbackUrl = `${baseUrl}/api/auth/callback/github`
+  const githubAppSetupUrl = `${baseUrl}/api/github-app/callback`
   const state = randomBytes(16).toString('hex')
 
   const manifest = {
@@ -101,7 +102,8 @@ async function main() {
     },
     // Better Auth already handles GitHub OAuth login separately.
     request_oauth_on_install: false,
-    setup_on_update: false,
+    setup_on_update: true,
+    setup_url: githubAppSetupUrl,
   }
 
   const appCreationUrl =
@@ -159,6 +161,7 @@ async function main() {
       `App: ${converted.name} (${converted.slug})`,
       `Updated env: ${envPath}`,
       `Auth callback URL: ${authCallbackUrl}`,
+      `GitHub App setup URL: ${githubAppSetupUrl}`,
       'Webhook: disabled in manifest setup (can be configured later).',
     ].join('\n'),
     'Completed',

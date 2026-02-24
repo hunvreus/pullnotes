@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiGithubAppCallbackRouteImport } from './routes/api/github-app/callback'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as OwnerRepoBranchRouteImport } from './routes/$owner/$repo/$branch'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubAppCallbackRoute = ApiGithubAppCallbackRouteImport.update({
+  id: '/api/github-app/callback',
+  path: '/api/github-app/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
@@ -33,30 +39,43 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$owner/$repo/$branch': typeof OwnerRepoBranchRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/github-app/callback': typeof ApiGithubAppCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$owner/$repo/$branch': typeof OwnerRepoBranchRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/github-app/callback': typeof ApiGithubAppCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$owner/$repo/$branch': typeof OwnerRepoBranchRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/github-app/callback': typeof ApiGithubAppCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$owner/$repo/$branch' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/$owner/$repo/$branch'
+    | '/api/auth/$'
+    | '/api/github-app/callback'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$owner/$repo/$branch' | '/api/auth/$'
-  id: '__root__' | '/' | '/$owner/$repo/$branch' | '/api/auth/$'
+  to: '/' | '/$owner/$repo/$branch' | '/api/auth/$' | '/api/github-app/callback'
+  id:
+    | '__root__'
+    | '/'
+    | '/$owner/$repo/$branch'
+    | '/api/auth/$'
+    | '/api/github-app/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   OwnerRepoBranchRoute: typeof OwnerRepoBranchRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiGithubAppCallbackRoute: typeof ApiGithubAppCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -66,6 +85,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github-app/callback': {
+      id: '/api/github-app/callback'
+      path: '/api/github-app/callback'
+      fullPath: '/api/github-app/callback'
+      preLoaderRoute: typeof ApiGithubAppCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
@@ -89,6 +115,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   OwnerRepoBranchRoute: OwnerRepoBranchRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiGithubAppCallbackRoute: ApiGithubAppCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

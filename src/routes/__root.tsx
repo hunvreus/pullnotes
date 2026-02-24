@@ -1,6 +1,8 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
+import { useEffect } from 'react'
+import { TooltipProvider } from '#/components/ui/tooltip'
 
 import appCss from '../styles.css?url'
 
@@ -20,6 +22,11 @@ export const Route = createRootRoute({
     ],
     links: [
       {
+        rel: 'icon',
+        type: 'image/svg+xml',
+        href: '/favicon.svg',
+      },
+      {
         rel: 'stylesheet',
         href: appCss,
       },
@@ -29,25 +36,43 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const root = document.documentElement
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const storedTheme = window.localStorage.getItem('theme')
+    const themeMode =
+      storedTheme === 'dark' || storedTheme === 'light' || storedTheme === 'system'
+        ? storedTheme
+        : 'system'
+
+    const resolvedTheme =
+      themeMode === 'system' ? (mediaQuery.matches ? 'dark' : 'light') : themeMode
+    root.classList.toggle('dark', resolvedTheme === 'dark')
+  }, [])
+
   return (
     <html lang="en">
       <head>
         <HeadContent />
       </head>
       <body>
-        {children}
-        <TanStackDevtools
-          config={{
-            position: 'bottom-right',
-          }}
-          plugins={[
-            {
-              name: 'Tanstack Router',
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-          ]}
-        />
-        <Scripts />
+        <TooltipProvider>
+          {children}
+          <TanStackDevtools
+            config={{
+              position: 'bottom-right',
+            }}
+            plugins={[
+              {
+                name: 'Tanstack Router',
+                render: <TanStackRouterDevtoolsPanel />,
+              },
+            ]}
+          />
+          <Scripts />
+        </TooltipProvider>
       </body>
     </html>
   )

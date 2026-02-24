@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Ellipsis,
+  ExternalLink,
   FileText,
   ImagePlus,
   Loader2,
@@ -35,6 +36,7 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '#/components/ui/dropdown-menu'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '#/components/ui/empty'
@@ -48,12 +50,15 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
   SidebarHeader,
   SidebarInput,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
   SidebarProvider,
   SidebarTrigger,
 } from '#/components/ui/sidebar'
@@ -86,6 +91,15 @@ type FolderNode = {
 
 type ThemeMode = 'system' | 'dark' | 'light'
 type EmojiOption = { unicode: string; label: string }
+type CoverPhoto = {
+  id: string
+  previewUrl: string
+  fullUrl: string
+  alt: string
+  authorName: string
+  authorUrl: string
+}
+
 const ICON_OPTIONS: EmojiOption[] = [
   { unicode: '😀', label: 'grinning face' },
   { unicode: '😁', label: 'beaming face' },
@@ -199,6 +213,67 @@ const recentCommitsServerFn = createServerFn({ method: 'GET' })
     return listRecentCommits(data.target)
   })
 
+const searchPexelsServerFn = createServerFn({ method: 'GET' })
+  .inputValidator((input: { query: string }) => input)
+  .handler(async ({ data }) => {
+    await requireSession()
+
+    const apiKey = process.env.PEXELS_API_KEY?.trim()
+    if (!apiKey) {
+      throw new Error('Missing PEXELS_API_KEY.')
+    }
+
+    const query = data.query.trim() || 'notion cover'
+    const url = new URL('https://api.pexels.com/v1/search')
+    url.searchParams.set('query', query)
+    url.searchParams.set('per_page', '8')
+    url.searchParams.set('orientation', 'landscape')
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: 'application/json',
+        Authorization: apiKey,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Pexels search failed (${response.status}).`)
+    }
+
+    const payload = (await response.json()) as {
+      photos: Array<{
+        id: string
+        alt: string | null
+        src: {
+          medium?: string
+          large2x?: string
+          large?: string
+          landscape?: string
+          original?: string
+        }
+        photographer: string
+        photographer_url: string
+      }>
+    }
+
+    return payload.photos
+      .map((item) => {
+        const previewUrl = item.src.medium || item.src.large || item.src.landscape || item.src.original || ''
+        const fullUrl = item.src.large2x || item.src.large || item.src.original || previewUrl
+        if (!previewUrl || !fullUrl) return null
+
+        return {
+          id: String(item.id),
+          previewUrl,
+          fullUrl,
+          alt: item.alt || 'Pexels cover',
+          authorName: item.photographer,
+          authorUrl: item.photographer_url,
+        }
+      })
+      .filter((item): item is CoverPhoto => Boolean(item))
+  })
+
 export const Route = createFileRoute('/$owner/$repo/$branch')({
   validateSearch: (search): RouteSearch => {
     const raw = search as Record<string, unknown>
@@ -222,6 +297,7 @@ function App() {
   const saveFile = useServerFn(saveFileServerFn)
   const deleteFile = useServerFn(deleteFileServerFn)
   const getRecentCommits = useServerFn(recentCommitsServerFn)
+  const searchPexels = useServerFn(searchPexelsServerFn)
 
   const { data: authSession, isPending: authPending } = authClient.useSession()
   const titleInputRef = useRef<HTMLInputElement>(null)
@@ -258,6 +334,11 @@ function App() {
   const [emojiQuery, setEmojiQuery] = useState('')
   const [allEmojiOptions, setAllEmojiOptions] = useState<EmojiOption[] | null>(null)
   const [isEmojiSearchLoading, setIsEmojiSearchLoading] = useState(false)
+  const [isCoverPopoverOpen, setIsCoverPopoverOpen] = useState(false)
+  const [coverQuery, setCoverQuery] = useState('')
+  const [coverResults, setCoverResults] = useState<CoverPhoto[]>([])
+  const [isCoverSearchLoading, setIsCoverSearchLoading] = useState(false)
+  const [coverSearchError, setCoverSearchError] = useState<string | null>(null)
 
   const owner = params.owner.trim()
   const repo = params.repo.trim()
@@ -284,8 +365,7 @@ function App() {
   }, [emojiQuery, allEmojiOptions])
 
   useEffect(() => {
-    const query = emojiQuery.trim()
-    if (!query || allEmojiOptions || isEmojiSearchLoading) return
+    if (!isEmojiPopoverOpen || allEmojiOptions) return
 
     let cancelled = false
     const load = async () => {
@@ -311,7 +391,39 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [emojiQuery, allEmojiOptions])
+  }, [isEmojiPopoverOpen, allEmojiOptions])
+
+  useEffect(() => {
+    if (!isCoverPopoverOpen) return
+
+    let cancelled = false
+    const timeout = setTimeout(() => {
+      void (async () => {
+        setIsCoverSearchLoading(true)
+        setCoverSearchError(null)
+        try {
+          const results = await searchPexels({
+            data: {
+              query: coverQuery,
+            },
+          })
+          if (cancelled) return
+          setCoverResults(results)
+        } catch (error) {
+          if (cancelled) return
+          setCoverResults([])
+          setCoverSearchError(errorToMessage(error))
+        } finally {
+          if (!cancelled) setIsCoverSearchLoading(false)
+        }
+      })()
+    }, 250)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
+  }, [isCoverPopoverOpen, coverQuery, searchPexels])
 
   const isDirty =
     hasLoadedFile &&
@@ -336,6 +448,8 @@ function App() {
   const fileUrl = selectedPath
     ? `https://github.com/${owner}/${repo}/blob/${branch}${rootPath ? `/${rootPath}` : ''}/${selectedPath}`
     : null
+  const toFileUrl = (path: string) =>
+    `https://github.com/${owner}/${repo}/blob/${branch}${rootPath ? `/${rootPath}` : ''}/${path}`
   const breadcrumbs = useMemo(() => {
     if (!selectedPath) return []
     const stem = selectedPath.replace(/\.md$/i, '')
@@ -350,6 +464,11 @@ function App() {
       }
     })
   }, [selectedPath, fileMap])
+  const childFiles = useMemo(() => {
+    if (!selectedPath) return []
+    const childrenDir = `${dirname(selectedPath) ? `${dirname(selectedPath)}/` : ''}${fileLabel(selectedPath)}`
+    return files.filter((file) => dirname(file.path) === childrenDir && file.path !== selectedPath)
+  }, [files, selectedPath])
 
   const refreshFiles = async () => {
     const nextFiles = await listFiles({
@@ -505,16 +624,15 @@ function App() {
     input.setSelectionRange(cursor, cursor)
   }
 
-  const handleSetCover = () => {
-    const nextCover = window.prompt('Paste an Unsplash image URL', cover)
-    if (nextCover === null) return
+  const handleSetCover = (nextCover: string) => {
     const trimmed = nextCover.trim()
-    if (trimmed && !isUnsplashUrl(trimmed)) {
-      setErrorMessage('Cover URL must come from Unsplash.')
+    if (trimmed && !isAllowedCoverUrl(trimmed)) {
+      setErrorMessage('Cover URL must come from Pexels or Unsplash.')
       return
     }
     setErrorMessage(null)
     setCover(trimmed)
+    setIsCoverPopoverOpen(false)
   }
 
   const handleSetIcon = (nextIcon: string) => {
@@ -597,6 +715,49 @@ function App() {
     const targetPath = selectedPath
       ? `${dirname(selectedPath) ? `${dirname(selectedPath)}/` : ''}${nextSlug}.md`
       : `${nextSlug}.md`
+
+    setIsSaving(true)
+    setErrorMessage(null)
+
+    try {
+      await saveFile({
+        data: {
+          target: activeTarget,
+          path: targetPath,
+          title: cleanTitle,
+          icon: '',
+          cover: '',
+          body: '',
+        },
+      })
+
+      await refreshFiles()
+      setSelectedPath(targetPath)
+      expandParents(targetPath, setExpandedFolders)
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCreateChild = async (parentPath: string) => {
+    const nextTitle = window.prompt('Title')
+    if (!nextTitle) return
+    const cleanTitle = nextTitle.trim()
+    if (!cleanTitle) {
+      setErrorMessage('Title is required.')
+      return
+    }
+
+    const nextSlug = toSlug(cleanTitle)
+    if (!nextSlug) {
+      setErrorMessage('Title is required.')
+      return
+    }
+
+    const targetDir = `${dirname(parentPath) ? `${dirname(parentPath)}/` : ''}${fileLabel(parentPath)}`
+    const targetPath = `${targetDir}/${nextSlug}.md`
 
     setIsSaving(true)
     setErrorMessage(null)
@@ -719,24 +880,128 @@ function App() {
     }
   }
 
+  const handleRenamePath = async (path: string) => {
+    const current = fileLabel(path)
+    const nextName = window.prompt('Rename page', current)
+    if (!nextName) return
+    const nextSlug = toSlug(nextName)
+    if (!nextSlug) return
+
+    const nextPath = `${dirname(path) ? `${dirname(path)}/` : ''}${nextSlug}.md`
+    if (nextPath === path) return
+
+    setIsSaving(true)
+    setErrorMessage(null)
+    try {
+      const loaded =
+        selectedPath === path && hasLoadedFile && loadedPath === path && sha
+          ? { path, sha, title, icon, cover, body }
+          : await getFile({
+              data: {
+                target: activeTarget,
+                path,
+              },
+            })
+
+      await saveFile({
+        data: {
+          target: activeTarget,
+          path: nextPath,
+          title: loaded.title,
+          icon: loaded.icon,
+          cover: loaded.cover,
+          body: loaded.body,
+        },
+      })
+      await deleteFile({
+        data: {
+          target: activeTarget,
+          path,
+          sha: loaded.sha,
+        },
+      })
+
+      if (selectedPath === path) {
+        setSelectedPath(nextPath)
+      }
+      await refreshFiles()
+      expandParents(nextPath, setExpandedFolders)
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleDeletePath = async (path: string) => {
+    if (!window.confirm(`Delete ${path}?`)) return
+
+    setIsSaving(true)
+    setErrorMessage(null)
+    try {
+      const loaded =
+        selectedPath === path && hasLoadedFile && loadedPath === path && sha
+          ? { sha }
+          : await getFile({
+              data: {
+                target: activeTarget,
+                path,
+              },
+            })
+
+      await deleteFile({
+        data: {
+          target: activeTarget,
+          path,
+          sha: loaded.sha,
+        },
+      })
+
+      if (selectedPath === path) {
+        setSelectedPath(null)
+        setTitle('')
+        setIcon('')
+        setCover('')
+        setBody('')
+        setSha(undefined)
+        setHasLoadedFile(false)
+        setLoadedPath(null)
+        setSavedTitle('')
+        setSavedIcon('')
+        setSavedCover('')
+        setSavedBody('')
+      }
+      await refreshFiles()
+    } catch (error) {
+      setErrorMessage(errorToMessage(error))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  if (authPending) {
+    return (
+      <main className="grid min-h-screen place-items-center p-6">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          Loading app...
+        </div>
+      </main>
+    )
+  }
+
   return (
     <SidebarProvider>
       <Sidebar>
         <SidebarHeader>
           {isLoadingRepo ? (
-            <div className="space-y-2 p-1">
-              <div className="flex h-8 items-center gap-2 rounded-md px-2">
-                <Skeleton className="size-7 rounded-md" />
-                <div className="grid flex-1 gap-1">
-                  <Skeleton className="h-3 w-32 rounded-sm" />
-                  <Skeleton className="h-3 w-16 rounded-sm" />
-                </div>
-              </div>
+            <>
+              <Skeleton className="h-12 w-full rounded-md" />
               <div className="flex items-center gap-2">
                 <Skeleton className="h-8 flex-1 rounded-md" />
                 <Skeleton className="size-8 rounded-md" />
               </div>
-            </div>
+            </>
           ) : (
             <>
               <SidebarMenu>
@@ -757,7 +1022,12 @@ function App() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg" align="start" side="bottom" sideOffset={4}>
                       <DropdownMenuItem asChild>
-                        <a href={repoUrl} target="_blank" rel="noreferrer">Open on GitHub</a>
+                        <a href={repoUrl} target="_blank" rel="noreferrer">
+                          Open on GitHub
+                          <DropdownMenuShortcut>
+                            <ExternalLink className="size-3.5" />
+                          </DropdownMenuShortcut>
+                        </a>
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => void navigate({ to: '/' })}>
@@ -801,89 +1071,95 @@ function App() {
         </SidebarHeader>
 
         <SidebarContent>
-          <ScrollArea className="h-full">
-            <div className="p-2">
-              {isLoadingRepo ? (
-                <div className="space-y-1 px-1">
-                  {Array.from({ length: 10 }).map((_, index) => (
-                    <Skeleton
-                      key={`sidebar-skeleton-${index}`}
-                      className={`h-7 rounded-md ${index < 4 ? 'w-full' : index < 7 ? 'w-5/6' : 'w-2/3'}`}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <TreeView
-                  root={tree}
-                  expandedFolders={expandedFolders}
-                  onToggleFolder={toggleFolder}
-                  onSelectFile={setSelectedPath}
-                  selectedPath={selectedPath}
-                  fileSearch={filterQuery}
-                />
-              )}
-            </div>
-          </ScrollArea>
+          <SidebarGroup>
+            {isLoadingRepo ? (
+              <div className="space-y-1">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton
+                    key={`sidebar-skeleton-${index}`}
+                    className="h-7 w-full rounded-md"
+                  />
+                ))}
+              </div>
+            ) : (
+              <TreeView
+                root={tree}
+                expandedFolders={expandedFolders}
+                onToggleFolder={toggleFolder}
+                onSelectFile={setSelectedPath}
+                selectedPath={selectedPath}
+                fileSearch={filterQuery}
+                onCreateChild={(path) => void handleCreateChild(path)}
+                onRename={(path) => void handleRenamePath(path)}
+                onDelete={(path) => void handleDeletePath(path)}
+                toFileUrl={toFileUrl}
+              />
+            )}
+          </SidebarGroup>
         </SidebarContent>
 
         <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
-                    <Avatar className="size-8">
-                      <AvatarImage src={`https://github.com/${owner}.png`} alt={owner} />
-                      <AvatarFallback>{owner.slice(0, 2).toUpperCase()}</AvatarFallback>
-                    </Avatar>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-medium">{authSession?.user?.name || authSession?.user?.email || 'User'}</span>
-                      <span className="truncate text-xs text-muted-foreground">{authSession?.user?.email || ''}</span>
-                    </div>
-                    <ChevronsUpDown className="ml-auto size-4" />
-                  </SidebarMenuButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg" align="end" side="top" sideOffset={4}>
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="text-xs text-muted-foreground">
-                      Theme
-                    </DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={themeMode}
-                      onValueChange={(value) => setThemeMode(value as ThemeMode)}
-                    >
-                      <DropdownMenuRadioItem value="system">
-                        System
-                      </DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="dark">
-                        Dark
-                      </DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="light">
-                        Light
-                      </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  {isAuthenticated ? (
-                    <DropdownMenuItem variant="destructive" onSelect={() => void handleSignOut()}>
-                      Sign out
-                    </DropdownMenuItem>
-                  ) : (
-                    <DropdownMenuItem onSelect={() => void handleSignIn()}>
-                      <LogIn className="mr-2 size-4" />
-                      Sign in
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          {isLoadingRepo ? (
+            <Skeleton className="h-12 w-full rounded-md" />
+          ) : (
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+                      <Avatar className="size-8">
+                        <AvatarImage src={`https://github.com/${owner}.png`} alt={owner} />
+                        <AvatarFallback>{owner.slice(0, 2).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      <div className="grid flex-1 text-left text-sm leading-tight">
+                        <span className="truncate font-medium">{authSession?.user?.name || authSession?.user?.email || 'User'}</span>
+                        <span className="truncate text-xs text-muted-foreground">{authSession?.user?.email || ''}</span>
+                      </div>
+                      <ChevronsUpDown className="ml-auto size-4" />
+                    </SidebarMenuButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg" align="end" side="top" sideOffset={4}>
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel className="text-xs text-muted-foreground">
+                        Theme
+                      </DropdownMenuLabel>
+                      <DropdownMenuRadioGroup
+                        value={themeMode}
+                        onValueChange={(value) => setThemeMode(value as ThemeMode)}
+                      >
+                        <DropdownMenuRadioItem value="system">
+                          System
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="dark">
+                          Dark
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="light">
+                          Light
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuGroup>
+                    <DropdownMenuSeparator />
+                    {isAuthenticated ? (
+                      <DropdownMenuItem variant="destructive" onSelect={() => void handleSignOut()}>
+                        Sign out
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onSelect={() => void handleSignIn()}>
+                        <LogIn className="mr-2 size-4" />
+                        Sign in
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          )}
         </SidebarFooter>
       </Sidebar>
 
       <SidebarInset>
-        <div className="flex h-svh flex-col">
-          <div className="flex h-14 items-center justify-between border-b px-4">
+        <div className="flex min-h-svh flex-col">
+          <div className="sticky top-0 z-20 flex h-12 items-center justify-between bg-background px-4">
             <div className="flex min-w-0 items-center gap-2">
               <SidebarTrigger className="md:hidden" />
               <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4 md:hidden" />
@@ -980,9 +1256,6 @@ function App() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
-              {authPending ? (
-                <span className="text-xs text-muted-foreground">Checking session...</span>
-              ) : null}
               <Button
                 type="button"
                 size="sm"
@@ -1014,13 +1287,22 @@ function App() {
                     <DropdownMenuItem asChild>
                       <a href={fileUrl} target="_blank" rel="noreferrer">
                         Open on GitHub
+                        <DropdownMenuShortcut>
+                          <ExternalLink className="size-3.5" />
+                        </DropdownMenuShortcut>
                       </a>
                     </DropdownMenuItem>
                   ) : null}
                   {fileUrl ? <DropdownMenuSeparator /> : null}
+                  {selectedPath ? (
+                    <DropdownMenuItem onSelect={() => void handleCreateChild(selectedPath)}>
+                      Add child
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem onSelect={() => void handleRename()}>
                     Rename
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onSelect={() => void handleDelete()}>
                     Delete
                   </DropdownMenuItem>
@@ -1029,142 +1311,131 @@ function App() {
             </div>
           </div>
 
-          {errorMessage ? (
-            <div className="border-b bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {errorMessage}
-            </div>
-          ) : null}
+          <div className="flex min-h-0 flex-1 flex-col">
+            {errorMessage ? (
+              <div className="bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {errorMessage}
+              </div>
+            ) : null}
 
-          {!isAuthenticated ? (
-            <div className="grid flex-1 place-items-center text-muted-foreground">
-              Sign in with GitHub to edit content.
-            </div>
-          ) : isLoadingRepo ? (
-            <div className="flex flex-1 overflow-auto">
-              <div className="mx-auto w-2xl max-w-full px-6 pt-6">
-                <Skeleton className="h-12 w-full rounded-md" />
-                <div className="mt-4 space-y-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <Skeleton key={`content-skeleton-${index}`} className="h-5 w-full rounded-md" />
-                  ))}
+            {!isAuthenticated ? (
+              <div className="grid flex-1 place-items-center text-muted-foreground">
+                Sign in with GitHub to edit content.
+              </div>
+            ) : isLoadingRepo ? (
+              <div className="flex flex-1">
+                <div className="mx-auto w-2xl max-w-full px-6 pt-6">
+                  <Skeleton className="h-12 mt-24 w-full rounded-md" />
                 </div>
               </div>
-            </div>
-          ) : files.length === 0 ? (
-            <div className="grid flex-1 place-items-center p-6">
-              <Empty className="max-w-md">
-                <EmptyHeader>
-                  <EmptyTitle>No pages yet</EmptyTitle>
-                  <EmptyDescription>This repository is empty. Create your first page to start editing.</EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
-                  <Button type="button" onClick={() => void handleCreate()}>
-                    Add a page
-                    <Plus />
-                  </Button>
-                </EmptyContent>
-              </Empty>
-            </div>
-          ) : !selectedPath ? (
-            <div className="grid flex-1 place-items-center text-muted-foreground">
-              Select a file from the left
-            </div>
-          ) : isLoadingFile ? (
-            <div className="flex flex-1 overflow-auto">
-              <div className="mx-auto w-2xl max-w-full px-6 pt-6">
-                <Skeleton className="h-12 w-full rounded-md" />
-                <div className="mt-4 space-y-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <Skeleton key={`file-loading-skeleton-${index}`} className="h-5 w-full rounded-md" />
-                  ))}
+            ) : files.length === 0 ? (
+              <div className="grid flex-1 place-items-center p-6">
+                <Empty className="max-w-md">
+                  <EmptyHeader>
+                    <EmptyTitle>No pages yet</EmptyTitle>
+                    <EmptyDescription>This repository is empty. Create your first page to start editing.</EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button type="button" onClick={() => void handleCreate()}>
+                      Add a page
+                      <Plus />
+                    </Button>
+                  </EmptyContent>
+                </Empty>
+              </div>
+            ) : !selectedPath ? (
+              <div className="grid flex-1 place-items-center text-muted-foreground">
+                Select a file from the left
+              </div>
+            ) : isLoadingFile ? (
+              <div className="flex flex-1">
+                <div className="mx-auto w-2xl max-w-full px-6 pt-6">
+                  <Skeleton className="h-12 mt-24 w-full rounded-md" />
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-              <div ref={editorRegionRef} className="w-full pb-10">
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col">
+              <div ref={editorRegionRef} className={`w-full pb-10 ${cover ? '' : 'pt-20'}`}>
                 {cover ? (
-                  <div className="group/cover relative w-full">
+                  <div className="group/cover relative mb-2 w-full">
                     <img
                       src={cover}
                       alt="Cover"
                       className="h-64 w-full object-cover"
                     />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-3 right-3 h-7 px-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/cover:opacity-100"
-                      onClick={() => setCover('')}
-                    >
-                      Remove cover
-                    </Button>
+                    <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 transition-opacity group-hover/cover:opacity-100">
+                      <Popover
+                        open={isCoverPopoverOpen}
+                        onOpenChange={(open) => {
+                          setIsCoverPopoverOpen(open)
+                          if (!open) {
+                            setCoverQuery('')
+                            setCoverSearchError(null)
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground"
+                          >
+                            Change cover
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[30rem] p-2" align="end" sideOffset={8}>
+                          <div className="space-y-2">
+                            <Input
+                              value={coverQuery}
+                              onChange={(event) => setCoverQuery(event.target.value)}
+                              placeholder="Search Pexels"
+                              className="h-7"
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              {coverResults.map((item) => (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  className="group/image relative overflow-hidden rounded-md border text-left"
+                                  onClick={() => handleSetCover(item.fullUrl)}
+                                  title={item.alt}
+                                >
+                                  <img
+                                    src={item.previewUrl}
+                                    alt={item.alt}
+                                    className="h-24 w-full object-cover transition-transform group-hover/image:scale-[1.02]"
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                            {isCoverSearchLoading ? (
+                              <p className="text-xs text-muted-foreground">Searching Pexels…</p>
+                            ) : null}
+                            {!isCoverSearchLoading && coverSearchError ? (
+                              <p className="text-xs text-destructive">{coverSearchError}</p>
+                            ) : null}
+                            {!isCoverSearchLoading && !coverSearchError && coverResults.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">No covers found.</p>
+                            ) : null}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-muted-foreground"
+                        onClick={() => setCover('')}
+                      >
+                        Remove cover
+                      </Button>
+                    </div>
                   </div>
                 ) : null}
 
-                <div className={`group/title mx-auto w-2xl max-w-full px-6 ${cover ? '-mt-10 relative z-10' : 'pt-6'}`}>
-                  <div className="mb-2 h-7">
-                    <div className="flex h-7 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover/title:opacity-100 group-hover/title:pointer-events-auto group-focus-within/title:opacity-100 group-focus-within/title:pointer-events-auto">
-                      {!icon ? (
-                        <Popover
-                          open={isEmojiPopoverOpen}
-                          onOpenChange={(open) => {
-                            setIsEmojiPopoverOpen(open)
-                            if (!open) {
-                              setEmojiQuery('')
-                            }
-                          }}
-                        >
-                          <PopoverTrigger asChild>
-                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground">
-                              <SmilePlus className="size-4" />
-                              Add icon
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-80 p-2" align="start" sideOffset={8}>
-                            <div className="space-y-2">
-                              <Input
-                                value={emojiQuery}
-                                onChange={(event) => setEmojiQuery(event.target.value)}
-                                placeholder="Search emoji"
-                                className="h-8"
-                              />
-                              <ScrollArea className="h-40">
-                                <div className="grid grid-cols-8 gap-1 pr-2">
-                                  {filteredEmojiOptions.map((item) => (
-                                    <button
-                                      key={item.unicode}
-                                      type="button"
-                                      title={item.label}
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg hover:bg-accent"
-                                      onClick={() => handleSetIcon(item.unicode)}
-                                    >
-                                      {item.unicode}
-                                    </button>
-                                  ))}
-                                </div>
-                                {isEmojiSearchLoading && emojiQuery.trim() ? (
-                                  <p className="p-2 text-xs text-muted-foreground">Searching emojis…</p>
-                                ) : null}
-                                {filteredEmojiOptions.length === 0 ? (
-                                  <p className="p-2 text-xs text-muted-foreground">No emojis found.</p>
-                                ) : null}
-                              </ScrollArea>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                      ) : null}
-
-                      {!cover ? (
-                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={handleSetCover}>
-                          <ImagePlus className="size-4" />
-                          Add cover
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {icon ? (
+                {icon ? (
+                  <div className="relative mx-auto w-2xl max-w-full px-6">
                     <Popover
                       open={isEmojiPopoverOpen}
                       onOpenChange={(open) => {
@@ -1175,23 +1446,35 @@ function App() {
                       }}
                     >
                       <PopoverTrigger asChild>
-                        <button
+                        <Button
                           type="button"
-                          className="mb-2 inline-flex size-[78px] items-center justify-center rounded-lg text-6xl leading-none"
+                          variant="ghost"
+                          className={`${cover ? '-mt-[39px]' : 'mt-0'} z-10 mb-2 h-auto inline-flex items-center justify-center rounded-lg p-0 text-6xl leading-none`}
                           aria-label="Change icon"
                         >
                           {icon}
-                        </button>
+                        </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-80 p-2" align="start" sideOffset={8}>
                         <div className="space-y-2">
-                          <Input
-                            value={emojiQuery}
-                            onChange={(event) => setEmojiQuery(event.target.value)}
-                            placeholder="Search emoji"
-                            className="h-8"
-                          />
-                          <ScrollArea className="h-40">
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={emojiQuery}
+                              onChange={(event) => setEmojiQuery(event.target.value)}
+                              placeholder="Search emoji"
+                              className="h-7"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-muted-foreground"
+                              onClick={() => handleSetIcon('')}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                          <ScrollArea className="h-36">
                             <div className="grid grid-cols-8 gap-1 pr-2">
                               {filteredEmojiOptions.map((item) => (
                                 <button
@@ -1208,23 +1491,127 @@ function App() {
                             {isEmojiSearchLoading && emojiQuery.trim() ? (
                               <p className="p-2 text-xs text-muted-foreground">Searching emojis…</p>
                             ) : null}
-                            {filteredEmojiOptions.length === 0 ? (
+                            {!isEmojiSearchLoading && filteredEmojiOptions.length === 0 ? (
                               <p className="p-2 text-xs text-muted-foreground">No emojis found.</p>
                             ) : null}
                           </ScrollArea>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs text-muted-foreground"
-                            onClick={() => handleSetIcon('')}
-                          >
-                            Remove icon
-                          </Button>
                         </div>
                       </PopoverContent>
                     </Popover>
-                  ) : null}
+                  </div>
+                ) : null}
+
+                <div className="mx-auto w-2xl max-w-full px-6">
+                  <div className={`group/title relative ${cover ? 'z-10' : ''}`}>
+                    <div className="pointer-events-none absolute top-0 left-0 flex h-7 items-center gap-1 opacity-0 transition-opacity group-hover/title:opacity-100 group-hover/title:pointer-events-auto group-focus-within/title:opacity-100 group-focus-within/title:pointer-events-auto">
+                    {!icon ? (
+                      <Popover
+                        open={isEmojiPopoverOpen}
+                        onOpenChange={(open) => {
+                          setIsEmojiPopoverOpen(open)
+                          if (!open) {
+                            setEmojiQuery('')
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button type="button" variant="secondary" size="sm" className="h-7 px-2 text-xs text-muted-foreground">
+                            <SmilePlus className="size-4" />
+                            Add icon
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80 p-2" align="start" sideOffset={8}>
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={emojiQuery}
+                                onChange={(event) => setEmojiQuery(event.target.value)}
+                                placeholder="Search emoji"
+                                className="h-7"
+                              />
+                            </div>
+                            <ScrollArea className="h-36">
+                              <div className="grid grid-cols-8 gap-1 pr-2">
+                                {filteredEmojiOptions.map((item) => (
+                                  <button
+                                    key={item.unicode}
+                                    type="button"
+                                    title={item.label}
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg hover:bg-accent"
+                                    onClick={() => handleSetIcon(item.unicode)}
+                                  >
+                                    {item.unicode}
+                                  </button>
+                                ))}
+                              </div>
+                              {isEmojiSearchLoading && emojiQuery.trim() ? (
+                                <p className="p-2 text-xs text-muted-foreground">Searching emojis…</p>
+                              ) : null}
+                              {!isEmojiSearchLoading && filteredEmojiOptions.length === 0 ? (
+                                <p className="p-2 text-xs text-muted-foreground">No emojis found.</p>
+                              ) : null}
+                            </ScrollArea>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    ) : null}
+
+                    {!cover ? (
+                      <Popover
+                        open={isCoverPopoverOpen}
+                        onOpenChange={(open) => {
+                          setIsCoverPopoverOpen(open)
+                          if (!open) {
+                            setCoverQuery('')
+                            setCoverSearchError(null)
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button type="button" variant="secondary" size="sm" className="h-7 px-2 text-xs text-muted-foreground">
+                            <ImagePlus className="size-4" />
+                            Add cover
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[30rem] p-2" align="start" sideOffset={8}>
+                          <div className="space-y-2">
+                            <Input
+                              value={coverQuery}
+                              onChange={(event) => setCoverQuery(event.target.value)}
+                              placeholder="Search Pexels"
+                              className="h-7"
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              {coverResults.map((item) => (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  className="group/image relative overflow-hidden rounded-md border text-left"
+                                  onClick={() => handleSetCover(item.fullUrl)}
+                                  title={item.alt}
+                                >
+                                  <img
+                                    src={item.previewUrl}
+                                    alt={item.alt}
+                                    className="h-24 w-full object-cover transition-transform group-hover/image:scale-[1.02]"
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                            {isCoverSearchLoading ? (
+                              <p className="text-xs text-muted-foreground">Searching Pexels…</p>
+                            ) : null}
+                            {!isCoverSearchLoading && coverSearchError ? (
+                              <p className="text-xs text-destructive">{coverSearchError}</p>
+                            ) : null}
+                            {!isCoverSearchLoading && !coverSearchError && coverResults.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">No covers found.</p>
+                            ) : null}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    ) : null}
+                  </div>
 
                   <input
                     ref={titleInputRef}
@@ -1238,12 +1625,13 @@ function App() {
                       }
                     }}
                     placeholder="Title"
-                    className="w-full border-0 bg-transparent px-0 pt-1 pb-2 text-4xl font-extrabold tracking-tight text-balance leading-tight outline-none placeholder:text-muted-foreground focus:outline-none"
+                    className="w-full border-0 bg-transparent px-0 py-8 text-4xl font-extrabold tracking-tight text-balance leading-tight outline-none placeholder:text-muted-foreground focus:outline-none"
                   />
 
-                  {titleMissing ? (
-                    <p className="pb-2 text-sm text-destructive">Title is required.</p>
-                  ) : null}
+                    {titleMissing ? (
+                      <p className="pb-2 text-sm text-destructive">Title is required.</p>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mx-auto w-2xl max-w-full px-6">
@@ -1258,9 +1646,27 @@ function App() {
                     />
                   </div>
                 </div>
+                {childFiles.length > 0 ? (
+                  <div className="mx-auto w-2xl max-w-full px-6 pt-2">
+                    <h3 className="text-sm font-medium text-muted-foreground">Children</h3>
+                    <div className="mt-2 space-y-1 pb-8">
+                      {childFiles.map((child) => (
+                        <button
+                          key={child.path}
+                          type="button"
+                          className="flex h-8 w-full items-center rounded-md border px-2 text-left text-sm hover:bg-muted"
+                          onClick={() => setSelectedPath(child.path)}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{entryTitle(child)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </SidebarInset>
     </SidebarProvider>
@@ -1274,6 +1680,10 @@ function TreeView(props: {
   onSelectFile: (path: string) => void
   selectedPath: string | null
   fileSearch: string
+  onCreateChild: (path: string) => void
+  onRename: (path: string) => void
+  onDelete: (path: string) => void
+  toFileUrl: (path: string) => string
 }) {
   const fileMap = useMemo(() => {
     const files = flattenFiles(props.root)
@@ -1298,6 +1708,10 @@ function TreeView(props: {
         onSelectFile: props.onSelectFile,
         selectedPath: props.selectedPath,
         searchTerm,
+        onCreateChild: props.onCreateChild,
+        onRename: props.onRename,
+        onDelete: props.onDelete,
+        toFileUrl: props.toFileUrl,
       })}
     </SidebarMenu>
   )
@@ -1312,6 +1726,10 @@ function renderFolderNode(args: {
   onSelectFile: (path: string) => void
   selectedPath: string | null
   searchTerm: string
+  onCreateChild: (path: string) => void
+  onRename: (path: string) => void
+  onDelete: (path: string) => void
+  toFileUrl: (path: string) => string
 }) {
   const {
     folder,
@@ -1322,6 +1740,10 @@ function renderFolderNode(args: {
     onSelectFile,
     selectedPath,
     searchTerm,
+    onCreateChild,
+    onRename,
+    onDelete,
+    toFileUrl,
   } = args
 
   const folderParentFiles = new Set(
@@ -1348,8 +1770,37 @@ function renderFolderNode(args: {
               {file.icon.trim()}
             </span>
           ) : null}
-          <span className="truncate">{entryTitle(file)}</span>
+          <span>{entryTitle(file)}</span>
         </SidebarMenuButton>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction className="right-2 text-muted-foreground peer-hover/menu-button:text-muted-foreground hover:text-foreground data-[state=open]:text-foreground">
+              <Ellipsis />
+              <span className="sr-only">Page options</span>
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="right" sideOffset={6}>
+            <DropdownMenuItem asChild>
+              <a href={toFileUrl(file.path)} target="_blank" rel="noreferrer">
+                Open on GitHub
+                <DropdownMenuShortcut>
+                  <ExternalLink className="size-3.5" />
+                </DropdownMenuShortcut>
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onCreateChild(file.path)}>
+              Add child
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onRename(file.path)}>
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onDelete(file.path)}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </SidebarMenuItem>
     ))
 
@@ -1367,42 +1818,68 @@ function renderFolderNode(args: {
 
       if (parentFile) {
         return (
-          <div key={subfolder.path}>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={selectedPath === parentFile.path}
-                onClick={() => {
-                  onSelectFile(parentFile.path)
-                  if (!isExpanded) onToggleFolder(subfolder.path)
+          <SidebarMenuItem key={subfolder.path}>
+            <SidebarMenuButton
+              isActive={selectedPath === parentFile.path}
+              onClick={() => {
+                onSelectFile(parentFile.path)
+                if (!isExpanded) onToggleFolder(subfolder.path)
+              }}
+              className="[&>svg]:text-muted-foreground"
+              style={{ paddingLeft: `${depth * 14 + 8}px` }}
+            >
+              <span
+                role="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onToggleFolder(subfolder.path)
                 }}
-                className="[&>svg]:text-muted-foreground"
-                style={{ paddingLeft: `${depth * 14 + 8}px` }}
+                className="inline-flex size-4 items-center justify-center"
               >
-                <span
-                  role="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onToggleFolder(subfolder.path)
-                  }}
-                  className="inline-flex size-4 items-center justify-center"
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="size-3.5" />
-                  ) : (
-                    <ChevronRight className="size-3.5" />
-                  )}
+                {isExpanded ? (
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 text-muted-foreground" />
+                )}
+              </span>
+              {!parentFile.icon.trim() ? <FileText className="size-4 shrink-0" /> : null}
+              {parentFile.icon.trim() ? (
+                <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+                  {parentFile.icon.trim()}
                 </span>
-                {!parentFile.icon.trim() ? <FileText className="size-4 shrink-0" /> : null}
-                {parentFile.icon.trim() ? (
-                  <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
-                    {parentFile.icon.trim()}
-                  </span>
-                ) : null}
-                <span className="truncate">{entryTitle(parentFile)}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+              ) : null}
+              <span>{entryTitle(parentFile)}</span>
+            </SidebarMenuButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuAction className="right-2 text-muted-foreground peer-hover/menu-button:text-muted-foreground hover:text-foreground data-[state=open]:text-foreground">
+                  <Ellipsis />
+                  <span className="sr-only">Page options</span>
+                </SidebarMenuAction>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="right" sideOffset={6}>
+                <DropdownMenuItem asChild>
+                  <a href={toFileUrl(parentFile.path)} target="_blank" rel="noreferrer">
+                    Open on GitHub
+                    <DropdownMenuShortcut>
+                      <ExternalLink className="size-3.5" />
+                    </DropdownMenuShortcut>
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => onCreateChild(parentFile.path)}>
+                  Add child
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onRename(parentFile.path)}>
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onSelect={() => onDelete(parentFile.path)}>
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {isExpanded ? (
-              <div className="ml-2 border-l pl-1">
+              <SidebarMenuSub className="mr-0 pr-0">
                 {renderFolderNode({
                   folder: {
                     ...subfolder,
@@ -1415,30 +1892,33 @@ function renderFolderNode(args: {
                   onSelectFile,
                   selectedPath,
                   searchTerm,
+                  onCreateChild,
+                  onRename,
+                  onDelete,
+                  toFileUrl,
                 })}
-              </div>
+              </SidebarMenuSub>
             ) : null}
-          </div>
+          </SidebarMenuItem>
         )
       }
 
       return (
-        <div key={subfolder.path}>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              onClick={() => onToggleFolder(subfolder.path)}
-              style={{ paddingLeft: `${depth * 14 + 8}px` }}
-            >
-              {isExpanded ? (
-                <ChevronDown className="size-3.5" />
-              ) : (
-                <ChevronRight className="size-3.5" />
-              )}
-              <span className="truncate">{subfolder.name}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          {isExpanded
-            ? renderFolderNode({
+        <SidebarMenuItem key={subfolder.path}>
+          <SidebarMenuButton
+            onClick={() => onToggleFolder(subfolder.path)}
+            style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          >
+            {isExpanded ? (
+              <ChevronDown className="size-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-3.5 text-muted-foreground" />
+            )}
+            <span>{subfolder.name}</span>
+          </SidebarMenuButton>
+          {isExpanded ? (
+            <SidebarMenuSub className="mr-0 pr-0">
+              {renderFolderNode({
                 folder: subfolder,
                 depth: depth + 1,
                 fileMap,
@@ -1447,9 +1927,14 @@ function renderFolderNode(args: {
                 onSelectFile,
                 selectedPath,
                 searchTerm,
-              })
-            : null}
-        </div>
+                onCreateChild,
+                onRename,
+                onDelete,
+                toFileUrl,
+              })}
+            </SidebarMenuSub>
+          ) : null}
+        </SidebarMenuItem>
       )
     })
     .filter(Boolean)
@@ -1566,10 +2051,11 @@ function hasMatchingChild(folder: FolderNode, searchTerm: string): boolean {
   return folder.folders.some((subfolder) => hasMatchingChild(subfolder, searchTerm))
 }
 
-function isUnsplashUrl(value: string): boolean {
+function isAllowedCoverUrl(value: string): boolean {
   try {
     const url = new URL(value)
     return (
+      url.hostname === 'images.pexels.com' ||
       url.hostname === 'images.unsplash.com' ||
       url.hostname === 'source.unsplash.com' ||
       url.hostname.endsWith('.unsplash.com')

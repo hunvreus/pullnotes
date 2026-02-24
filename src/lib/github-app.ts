@@ -25,7 +25,7 @@ function getGitHubApp() {
 
 export function getGitHubAppInstallUrl(): string | null {
   const appName = process.env.GITHUB_APP_NAME
-  return appName ? `https://github.com/apps/${appName}/installations/new` : null
+  return appName ? `https://github.com/apps/${appName}/installations/select_target` : null
 }
 
 export async function getOwnerInstallationId(
@@ -91,6 +91,8 @@ export async function searchInstallationRepos(input: {
     name: string
     fullName: string
     defaultBranch: string
+    private: boolean
+    updatedAt: string
   }>
 > {
   const app = getGitHubApp()
@@ -108,6 +110,8 @@ export async function searchInstallationRepos(input: {
       name: repo.name,
       fullName: repo.full_name,
       defaultBranch: repo.default_branch,
+      private: repo.private,
+      updatedAt: repo.updated_at,
     }))
   }
 
@@ -123,6 +127,8 @@ export async function searchInstallationRepos(input: {
     name: repo.name,
     fullName: repo.full_name,
     defaultBranch: repo.default_branch,
+    private: repo.private,
+    updatedAt: repo.updated_at,
   }))
 }
 

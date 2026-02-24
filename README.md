@@ -15,7 +15,7 @@ Markdown files are stored as:
 ```md
 ---
 icon: 🚀
-cover: https://images.unsplash.com/...
+cover: https://images.pexels.com/photos/...
 ---
 
 # My title
@@ -58,6 +58,8 @@ cp .env.example .env
   - `GITHUB_APP_PRIVATE_KEY` (full PEM contents)
   - `GITHUB_APP_CLIENT_ID`
   - `GITHUB_APP_CLIENT_SECRET`
+- Cover search:
+  - `PEXELS_API_KEY`
 
 Or run the setup helper to create the GitHub App and write these values for you:
 
@@ -104,7 +106,8 @@ pnpm auth:migrate
 - `ArrowUp` at start of body focuses title.
 - Cover:
   - top, full-width image
-  - currently validated to Unsplash URLs
+  - search + select from Pexels
+  - URL validation accepts Pexels and Unsplash hosts
 - Icon:
   - emoji picker with search
   - sidebar and breadcrumb show emoji + title

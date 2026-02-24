@@ -210,6 +210,24 @@ code {
   }
 }
 
+[data-sidebar="content"] {
+  scrollbar-color: var(--color-sidebar-border) var(--color-sidebar);
+}
+
+[data-sidebar="content"]::-webkit-scrollbar {
+  width: 10px;
+}
+
+[data-sidebar="content"]::-webkit-scrollbar-track {
+  background: var(--color-sidebar);
+}
+
+[data-sidebar="content"]::-webkit-scrollbar-thumb {
+  background: var(--color-sidebar-border);
+  border-radius: 9999px;
+  border: 2px solid var(--color-sidebar);
+}
+
 /* TipTap placeholder support */
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

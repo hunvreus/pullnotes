@@ -1,9 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn, useServerFn } from '@tanstack/react-start'
-import { Check, ChevronDown, Loader2, LogIn, RefreshCw, Search } from 'lucide-react'
+import { Check, ChevronsUpDown, Loader2, Lock, NotepadText, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '#/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '#/components/ui/dropdown-menu'
 import { Input } from '#/components/ui/input'
+import { Skeleton } from '#/components/ui/skeleton'
 import { authClient } from '#/lib/auth-client'
 import {
   getGitHubAppInstallUrl,
@@ -24,6 +33,8 @@ type RepoItem = {
   name: string
   fullName: string
   defaultBranch: string
+  private: boolean
+  updatedAt: string
 }
 
 type RouteSearch = {
@@ -31,6 +42,16 @@ type RouteSearch = {
   repo?: string
   branch?: string
 }
+
+type OwnersCache = {
+  owners: OwnerItem[]
+  viewerLogin: string
+  installUrl: string | null
+  selectedOwner: string
+}
+
+let ownersCache: OwnersCache | null = null
+let hasResolvedHomeSessionOnce = false
 
 const onboardingOwnersServerFn = createServerFn({ method: 'GET' }).handler(async () => {
   const accessToken = await requireGitHubAccessToken()
@@ -41,9 +62,10 @@ const onboardingOwnersServerFn = createServerFn({ method: 'GET' }).handler(async
     'X-GitHub-Api-Version': '2022-11-28',
   }
 
-  const [viewerResponse, orgsResponse] = await Promise.all([
+  const [viewerResponse, orgsResponse, installationsResponse] = await Promise.all([
     fetch('https://api.github.com/user', { headers }),
     fetch('https://api.github.com/user/orgs?per_page=100', { headers }),
+    fetch('https://api.github.com/user/installations?per_page=100', { headers }),
   ])
 
   if (!viewerResponse.ok) {
@@ -54,18 +76,55 @@ const onboardingOwnersServerFn = createServerFn({ method: 'GET' }).handler(async
     throw new Error(`Failed to load GitHub orgs (${orgsResponse.status}).`)
   }
 
+  if (!installationsResponse.ok) {
+    throw new Error(`Failed to load GitHub installations (${installationsResponse.status}).`)
+  }
+
   const viewer = (await viewerResponse.json()) as { id: number; login: string }
   const orgs = (await orgsResponse.json()) as Array<{ id: number; login: string }>
+  const installations = (await installationsResponse.json()) as {
+    installations: Array<{
+      id: number
+      account: {
+        id: number
+        login: string
+        type: 'User' | 'Organization'
+      } | null
+    }>
+  }
 
-  const rawOwners: Array<{ id: number; login: string; type: 'User' | 'Organization' }> = [
+  const installationByOwner = new Map<string, number>()
+  const installationOwners = new Map<string, { id: number; login: string; type: 'User' | 'Organization' }>()
+  for (const installation of installations.installations) {
+    const account = installation.account
+    if (!account?.login) continue
+    const key = `${account.type}:${account.login.toLowerCase()}`
+    installationByOwner.set(key, installation.id)
+    installationOwners.set(key, {
+      id: account.id,
+      login: account.login,
+      type: account.type,
+    })
+  }
+
+  const rawOwners = new Map<string, { id: number; login: string; type: 'User' | 'Organization' }>()
+  const seedOwners: Array<{ id: number; login: string; type: 'User' | 'Organization' }> = [
     { id: viewer.id, login: viewer.login, type: 'User' },
     ...orgs.map((org) => ({ id: org.id, login: org.login, type: 'Organization' as const })),
   ]
+  for (const owner of seedOwners) {
+    rawOwners.set(`${owner.type}:${owner.login.toLowerCase()}`, owner)
+  }
+  for (const [key, owner] of installationOwners.entries()) {
+    rawOwners.set(key, owner)
+  }
 
   const owners = await Promise.all(
-    rawOwners.map(async (owner) => ({
+    Array.from(rawOwners.values()).map(async (owner) => ({
       ...owner,
-      installationId: await getOwnerInstallationId(owner.login, owner.type),
+      installationId:
+        installationByOwner.get(`${owner.type}:${owner.login.toLowerCase()}`) ??
+        (await getOwnerInstallationId(owner.login, owner.type)),
     })),
   )
 
@@ -94,7 +153,7 @@ const searchReposServerFn = createServerFn({ method: 'GET' })
       installationId,
       owner: data.owner,
       query: data.query,
-      limit: 10,
+      limit: 5,
     })
 
     return {
@@ -123,32 +182,32 @@ function SelectorPage() {
   const searchRepos = useServerFn(searchReposServerFn)
   const { data: authSession, isPending: authPending } = authClient.useSession()
 
-  const [owners, setOwners] = useState<OwnerItem[]>([])
-  const [viewerLogin, setViewerLogin] = useState('')
-  const [installUrl, setInstallUrl] = useState<string | null>(null)
-  const [selectedOwner, setSelectedOwner] = useState('')
+  const [owners, setOwners] = useState<OwnerItem[]>(() => ownersCache?.owners ?? [])
+  const [viewerLogin, setViewerLogin] = useState(() => ownersCache?.viewerLogin ?? '')
+  const [installUrl, setInstallUrl] = useState<string | null>(() => ownersCache?.installUrl ?? null)
+  const [selectedOwner, setSelectedOwner] = useState(() => ownersCache?.selectedOwner ?? '')
   const [repoQuery, setRepoQuery] = useState('')
   const [repos, setRepos] = useState<RepoItem[]>([])
   const [isLoadingOwners, setIsLoadingOwners] = useState(false)
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false)
-
   const isAuthenticated = Boolean(authSession?.user)
   const selectedOwnerItem = owners.find((item) => item.login === selectedOwner) ?? null
+  const shouldShowAppLoader = authPending && !hasResolvedHomeSessionOnce && !ownersCache
+  const showOwnersBootstrapSkeleton =
+    (authPending && owners.length === 0) || (isAuthenticated && isLoadingOwners && owners.length === 0)
 
   const viewerOwner = useMemo(
     () => owners.find((item) => item.type === 'User' && item.login === viewerLogin) ?? null,
     [owners, viewerLogin],
   )
 
-  const selectedOwnerInstallUrl = useMemo(() => {
-    if (!installUrl) return null
-    if (!selectedOwnerItem) return installUrl
-    const separator = installUrl.includes('?') ? '&' : '?'
-    const targetType = selectedOwnerItem.type === 'Organization' ? 'Organization' : 'User'
-    return `${installUrl}${separator}target_id=${selectedOwnerItem.id}&target_type=${targetType}`
-  }, [installUrl, selectedOwnerItem])
+  const nextInstallOwner = useMemo(
+    () => owners.find((item) => item.installationId === null) ?? null,
+    [owners],
+  )
+
+  const addAccountInstallUrl = installUrl
 
   useEffect(() => {
     const owner = routeSearch.owner?.trim()
@@ -164,40 +223,70 @@ function SelectorPage() {
     })
   }, [navigate, routeSearch.branch, routeSearch.owner, routeSearch.repo])
 
-  const refreshOwners = async () => {
-    setIsLoadingOwners(true)
+  const applyOwners = (data: { owners: OwnerItem[]; viewerLogin: string; installUrl: string | null }) => {
+    const fallback = data.owners.find((item) => item.installationId !== null) ?? data.owners[0]
+    const nextSelectedOwner =
+      selectedOwner && data.owners.some((item) => item.login === selectedOwner)
+        ? selectedOwner
+        : fallback?.login || ''
+
+    setOwners(data.owners)
+    setViewerLogin(data.viewerLogin)
+    setInstallUrl(data.installUrl)
+    setSelectedOwner(nextSelectedOwner)
+    ownersCache = {
+      owners: data.owners,
+      viewerLogin: data.viewerLogin,
+      installUrl: data.installUrl,
+      selectedOwner: nextSelectedOwner,
+    }
+  }
+
+  const refreshOwners = async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setIsLoadingOwners(true)
 
     try {
       const data = await getOwners()
-      setOwners(data.owners)
-      setViewerLogin(data.viewerLogin)
-      setInstallUrl(data.installUrl)
-
-      const fallback = data.owners.find((item) => item.installationId !== null) ?? data.owners[0]
-      setSelectedOwner((current) => {
-        if (current && data.owners.some((item) => item.login === current)) return current
-        return fallback?.login || ''
-      })
+      applyOwners(data)
     } catch (error) {
       setErrorMessage(errorToMessage(error))
     } finally {
-      setIsLoadingOwners(false)
+      if (!options?.silent) setIsLoadingOwners(false)
     }
   }
 
   useEffect(() => {
+    if (!authPending) {
+      hasResolvedHomeSessionOnce = true
+    }
+  }, [authPending])
+
+  useEffect(() => {
+    if (authPending) return
+
     if (!isAuthenticated) {
       setOwners([])
       setViewerLogin('')
       setInstallUrl(null)
       setSelectedOwner('')
       setRepos([])
+      ownersCache = null
+      return
+    }
+
+    const hasCache = Boolean(ownersCache)
+    if (hasCache) {
+      setOwners(ownersCache?.owners ?? [])
+      setViewerLogin(ownersCache?.viewerLogin ?? '')
+      setInstallUrl(ownersCache?.installUrl ?? null)
+      setSelectedOwner(ownersCache?.selectedOwner ?? '')
+      void refreshOwners({ silent: true })
       return
     }
 
     void refreshOwners()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated])
+  }, [authPending, isAuthenticated])
 
   useEffect(() => {
     if (!isAuthenticated || !selectedOwnerItem || !selectedOwnerItem.installationId) {
@@ -248,17 +337,48 @@ function SelectorPage() {
     })
   }
 
-  if (!isAuthenticated) {
+  if (shouldShowAppLoader) {
     return (
       <main className="grid min-h-screen place-items-center p-6">
-        <div className="w-full max-w-lg space-y-4 rounded-md border p-5">
-          <h1 className="text-lg font-semibold">PullNotes</h1>
-          <p className="text-sm text-muted-foreground">
-            Sign in, pick an account, then open a repository.
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          Loading app...
+        </div>
+      </main>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <main className="flex min-h-svh flex-col items-center justify-center gap-6 p-6 md:p-10">
+        <div className="flex w-full max-w-64 flex-col gap-4">
+          <div className="flex items-center gap-2 self-center font-medium">
+            <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
+              <NotepadText className="size-4" />
+            </div>
+            PullNotes
+          </div>
+          <p className="text-center text-sm text-muted-foreground">
+            A minimal Notion-style Markdown editor for GitHub repositories
           </p>
-          <Button type="button" onClick={() => void handleSignIn()} disabled={authPending}>
-            {authPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <LogIn className="mr-2 size-4" />}
-            Continue with GitHub
+          <Button
+            type="button"
+            className="w-full"
+            onClick={() => void handleSignIn()}
+            disabled={authPending}
+          >
+            {authPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <title>GitHub</title>
+                <path
+                  fill="currentColor"
+                  d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+                />
+              </svg>
+            )}
+            Login with GitHub
           </Button>
         </div>
       </main>
@@ -267,14 +387,16 @@ function SelectorPage() {
 
   return (
     <main className="grid min-h-screen place-items-center p-6">
-      <div className="w-full max-w-3xl space-y-4 rounded-md border p-5">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-lg font-semibold">Open repository</h1>
-          <Button type="button" variant="outline" onClick={() => void refreshOwners()} disabled={isLoadingOwners}>
-            {isLoadingOwners ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCw className="mr-2 size-4" />}
-            Refresh
-          </Button>
-        </div>
+      <Card className="w-full max-w-xl gap-4 py-4">
+        <CardHeader>
+          <div className="space-y-1">
+            <CardTitle>Choose a repository</CardTitle>
+            <CardDescription>
+              Select an account, search installed repositories, and open one to edit Markdown.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
 
         {errorMessage ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -285,79 +407,84 @@ function SelectorPage() {
         {viewerOwner && !viewerOwner.installationId && installUrl ? (
           <div className="rounded-md border px-3 py-2 text-sm">
             <p className="text-muted-foreground">App is not installed on your account yet.</p>
-            <a className="inline-block pt-2 underline" href={installUrl} target="_blank" rel="noreferrer">
+            <a className="inline-block pt-2 underline" href={installUrl}>
               Install app
             </a>
           </div>
         ) : null}
 
         {owners.length === 0 ? (
+          showOwnersBootstrapSkeleton ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-9 w-56" />
+                <Skeleton className="h-9 flex-1" />
+              </div>
+              <ul className="h-[232px] space-y-2 overflow-hidden">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <li key={`bootstrap-skeleton-${index}`} className="flex h-10 items-center justify-between rounded-md border px-3">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="size-4 rounded-sm" />
+                      <Skeleton className="h-3 w-16" />
+                    </div>
+                    <Skeleton className="h-6 w-14" />
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
           <div className="rounded-md border px-3 py-2 text-sm">
             <p className="text-muted-foreground">No accounts available yet.</p>
             <div className="flex items-center gap-3 pt-2">
               {installUrl ? (
-                <a className="underline" href={installUrl} target="_blank" rel="noreferrer">
+                <a className="underline" href={installUrl}>
                   Install app
                 </a>
               ) : null}
-              <Button type="button" variant="outline" size="sm" onClick={() => void refreshOwners()} disabled={isLoadingOwners}>
-                Refresh
-              </Button>
             </div>
           </div>
+          )
         ) : (
           <>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="relative w-full sm:w-72">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 w-full justify-between"
-                  onClick={() => setOwnerMenuOpen((open) => !open)}
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    {selectedOwnerItem ? (
-                      <img
-                        src={`https://github.com/${selectedOwnerItem.login}.png`}
-                        alt={selectedOwnerItem.login}
-                        className="size-5 rounded-full"
-                      />
-                    ) : null}
-                    <span className="truncate">{selectedOwnerItem?.login || 'Select account'}</span>
-                  </span>
-                  <ChevronDown className="size-4" />
-                </Button>
-
-                {ownerMenuOpen ? (
-                  <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border bg-background p-1 shadow-md">
+              <div className="w-full sm:w-56">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" className="w-full justify-between">
+                      <span className="flex min-w-0 items-center gap-2">
+                        {selectedOwnerItem ? (
+                          <img
+                            src={`https://github.com/${selectedOwnerItem.login}.png`}
+                            alt={selectedOwnerItem.login}
+                            className="size-5 rounded-sm"
+                          />
+                        ) : null}
+                        <span className="truncate">{selectedOwnerItem?.login || 'Select account'}</span>
+                      </span>
+                      <ChevronsUpDown className="size-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width)">
                     {owners.map((owner) => (
-                      <button
-                        type="button"
-                        key={`${owner.type}-${owner.login}`}
-                        onClick={() => {
-                          setSelectedOwner(owner.login)
-                          setOwnerMenuOpen(false)
-                        }}
-                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted"
-                      >
-                        <img src={`https://github.com/${owner.login}.png`} alt={owner.login} className="size-5 rounded-full" />
+                      <DropdownMenuItem key={`${owner.type}-${owner.login}`} onSelect={() => setSelectedOwner(owner.login)}>
+                        <img src={`https://github.com/${owner.login}.png`} alt={owner.login} className="size-5 rounded-sm" />
                         <span className="min-w-0 flex-1 truncate">{owner.login}</span>
                         {selectedOwner === owner.login ? <Check className="size-4" /> : null}
-                      </button>
+                      </DropdownMenuItem>
                     ))}
-                    <div className="my-1 border-t" />
-                    {installUrl ? (
-                      <a
-                        className="block rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-                        href={installUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Add account
-                      </a>
+                    {addAccountInstallUrl ? (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem asChild>
+                          <a href={addAccountInstallUrl}>
+                            Add account
+                          </a>
+                        </DropdownMenuItem>
+                      </>
                     ) : null}
-                  </div>
-                ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
               <div className="relative flex-1">
@@ -366,7 +493,7 @@ function SelectorPage() {
                   value={repoQuery}
                   onChange={(event) => setRepoQuery(event.target.value)}
                   placeholder="Search repositories"
-                  className="h-10 pl-9"
+                  className="pl-9"
                   disabled={!selectedOwnerItem?.installationId}
                 />
               </div>
@@ -375,42 +502,90 @@ function SelectorPage() {
             {selectedOwnerItem && !selectedOwnerItem.installationId ? (
               <div className="rounded-md border px-3 py-2 text-sm">
                 <p className="text-muted-foreground">Install the app for this account/org to continue.</p>
-                {selectedOwnerInstallUrl ? (
-                  <a className="inline-block pt-2 underline" href={selectedOwnerInstallUrl} target="_blank" rel="noreferrer">
+                {installUrl ? (
+                  <a className="inline-block pt-2 underline" href={installUrl}>
                     Install for {selectedOwnerItem.login}
                   </a>
                 ) : null}
               </div>
             ) : (
-              <div className="rounded-md border">
-                <ul className="divide-y">
+              <div>
+                <ul className="h-[232px] space-y-2 overflow-hidden">
                   {isLoadingRepos ? (
-                    <li className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
-                      <Loader2 className="size-4 animate-spin" /> Loading...
-                    </li>
-                  ) : repos.length === 0 ? (
-                    <li className="px-3 py-2 text-sm text-muted-foreground">No repositories found.</li>
-                  ) : (
-                    repos.map((repo) => (
-                      <li key={repo.id} className="flex items-center justify-between gap-2 px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{repo.fullName}</p>
-                          <p className="text-xs text-muted-foreground">{repo.defaultBranch || 'main'}</p>
+                    Array.from({ length: 5 }).map((_, index) => (
+                      <li
+                        key={`repo-skeleton-${index}`}
+                        className="flex h-10 items-center justify-between gap-3 rounded-md border px-3"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="size-4 rounded-sm" />
+                          <Skeleton className="h-3 w-16" />
                         </div>
-                        <Button type="button" size="sm" onClick={() => void openRepo(repo)}>
-                          Open
-                        </Button>
+                        <Skeleton className="h-6 w-14" />
                       </li>
                     ))
+                  ) : repos.length === 0 ? (
+                    <li className="flex h-10 items-center rounded-md border px-3 text-sm text-muted-foreground">
+                      No repositories found.
+                    </li>
+                  ) : (
+                    <>
+                      {repos.slice(0, 5).map((repo) => (
+                        <li
+                          key={repo.id}
+                          className="flex h-10 items-center justify-between gap-2 rounded-md border px-3"
+                        >
+                          <div className="min-w-0 flex items-center gap-2 text-sm">
+                            <a
+                              href={`/${selectedOwner}/${repo.name}/${repo.defaultBranch || 'main'}`}
+                              onClick={(event) => {
+                                event.preventDefault()
+                                void openRepo(repo)
+                              }}
+                              className="truncate font-medium hover:underline"
+                            >
+                              {repo.name}
+                            </a>
+                            {repo.private ? <Lock className="size-4 text-muted-foreground" /> : null}
+                            <span className="text-xs text-muted-foreground">{formatTimeAgo(repo.updatedAt)}</span>
+                          </div>
+                          <Button type="button" size="xs" variant="outline" onClick={() => void openRepo(repo)}>
+                            Open
+                          </Button>
+                        </li>
+                      ))}
+                    </>
                   )}
                 </ul>
               </div>
             )}
           </>
         )}
-      </div>
+        </CardContent>
+      </Card>
     </main>
   )
+}
+
+function formatTimeAgo(isoDate: string): string {
+  const input = new Date(isoDate).getTime()
+  if (Number.isNaN(input)) return 'Recently updated'
+  const diffMs = input - Date.now()
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  const week = 7 * day
+  const month = 30 * day
+  const year = 365 * day
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'always' })
+
+  if (Math.abs(diffMs) < hour) return rtf.format(Math.round(diffMs / minute), 'minute')
+  if (Math.abs(diffMs) < day) return rtf.format(Math.round(diffMs / hour), 'hour')
+  if (Math.abs(diffMs) < week) return rtf.format(Math.round(diffMs / day), 'day')
+  if (Math.abs(diffMs) < month) return rtf.format(Math.round(diffMs / week), 'week')
+  if (Math.abs(diffMs) < year) return rtf.format(Math.round(diffMs / month), 'month')
+  return rtf.format(Math.round(diffMs / year), 'year')
 }
 
 function errorToMessage(error: unknown): string {
