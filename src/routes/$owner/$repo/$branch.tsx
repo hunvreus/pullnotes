@@ -920,19 +920,23 @@ function App() {
 
   const handleDelete = async () => {
     if (!selectedPath || !sha) return
-    if (!window.confirm(`Delete ${selectedPath}?`)) return
+    const deletedPaths = subtreePathsFor(selectedPath)
+    const childCount = deletedPaths.length - 1
+    const confirmMessage =
+      childCount > 0
+        ? `Delete ${selectedPath} and ${childCount} child page${childCount === 1 ? '' : 's'}?`
+        : `Delete ${selectedPath}?`
+    if (!window.confirm(confirmMessage)) return
 
     setIsSaving(true)
     setErrorMessage(null)
     const toastId = toast.loading('Deleting page...')
     try {
-      const nextPath = files.find((file) => file.path !== selectedPath)?.path ?? null
-      await deleteFile({
-        data: {
-          target: activeTarget,
-          path: selectedPath,
-          sha,
-        },
+      const deletedSet = new Set(deletedPaths)
+      const nextPath = files.find((file) => !deletedSet.has(file.path))?.path ?? null
+      await deletePageWithChildren({
+        path: selectedPath,
+        sha,
       })
 
       if (nextPath) {
@@ -1007,14 +1011,23 @@ function App() {
   }
 
   const handleDeletePath = async (path: string) => {
-    if (!window.confirm(`Delete ${path}?`)) return
+    const deletedPaths = subtreePathsFor(path)
+    const childCount = deletedPaths.length - 1
+    const confirmMessage =
+      childCount > 0
+        ? `Delete ${path} and ${childCount} child page${childCount === 1 ? '' : 's'}?`
+        : `Delete ${path}?`
+    if (!window.confirm(confirmMessage)) return
 
     setIsSaving(true)
     setErrorMessage(null)
     const toastId = toast.loading('Deleting page...')
     try {
-      const nextPath =
-        selectedPath === path ? files.find((file) => file.path !== path)?.path ?? null : null
+      const deletedSet = new Set(deletedPaths)
+      const selectionIsDeleted = selectedPath ? deletedSet.has(selectedPath) : false
+      const nextPath = selectionIsDeleted
+        ? files.find((file) => !deletedSet.has(file.path))?.path ?? null
+        : null
       const loaded =
         selectedPath === path && hasLoadedFile && loadedPath === path && sha
           ? { sha }
@@ -1025,15 +1038,12 @@ function App() {
               },
             })
 
-      await deleteFile({
-        data: {
-          target: activeTarget,
-          path,
-          sha: loaded.sha,
-        },
+      await deletePageWithChildren({
+        path,
+        sha: loaded.sha,
       })
 
-      if (selectedPath === path) {
+      if (selectionIsDeleted) {
         if (nextPath) {
           await refreshFiles({ preferredPath: nextPath })
         } else {
@@ -1075,6 +1085,8 @@ function App() {
       .map((file) => file.path)
       .filter((filePath) => filePath.startsWith(prefix))
   }
+
+  const subtreePathsFor = (path: string) => [path, ...childPathsFor(path)]
 
   const remapSelectedPathAfterRename = (oldPath: string, newPath: string) => {
     if (!selectedPath) return
@@ -1159,6 +1171,38 @@ function App() {
     }
   }
 
+  const deletePageWithChildren = async (input: {
+    path: string
+    sha: string
+  }) => {
+    const childPaths = childPathsFor(input.path)
+    const childFiles = await Promise.all(
+      childPaths.map((path) =>
+        getFile({
+          data: {
+            target: activeTarget,
+            path,
+          },
+        }),
+      ),
+    )
+
+    const deletes = [
+      { path: input.path, sha: input.sha },
+      ...childFiles.map((child) => ({ path: child.path, sha: child.sha })),
+    ].sort((a, b) => b.path.length - a.path.length)
+
+    for (const item of deletes) {
+      await deleteFile({
+        data: {
+          target: activeTarget,
+          path: item.path,
+          sha: item.sha,
+        },
+      })
+    }
+  }
+
   if (authPending) {
     return (
       <main className="grid min-h-screen place-items-center p-6">
@@ -1183,7 +1227,7 @@ function App() {
   }
 
   return (
-    <SidebarProvider>
+    <SidebarProvider keyboardShortcut={false}>
       <Sidebar>
         <SidebarHeader>
           {isLoadingRepo ? (
@@ -1519,7 +1563,7 @@ function App() {
               </div>
             ) : isLoadingRepo ? (
               <div className="flex flex-1">
-                <div className="mx-auto w-2xl max-w-full px-6 pt-6">
+                <div className="mx-auto w-full max-w-2xl px-6 pt-6">
                   <Skeleton className="h-12 mt-24 w-full rounded-md" />
                 </div>
               </div>
@@ -1544,7 +1588,7 @@ function App() {
               </div>
             ) : isLoadingFile ? (
               <div className="flex flex-1">
-                <div className="mx-auto w-2xl max-w-full px-6 pt-6">
+                <div className="mx-auto w-full max-w-2xl px-6 pt-6">
                   <Skeleton className="h-12 mt-24 w-full rounded-md" />
                 </div>
               </div>
@@ -1630,7 +1674,7 @@ function App() {
                 ) : null}
 
                 {icon ? (
-                  <div className="relative mx-auto w-2xl max-w-full px-6">
+                  <div className="relative mx-auto w-full max-w-2xl px-6">
                     <Popover
                       open={isEmojiPopoverOpen}
                       onOpenChange={(open) => {
@@ -1696,7 +1740,7 @@ function App() {
                   </div>
                 ) : null}
 
-                <div className="mx-auto w-2xl max-w-full px-6">
+                <div className="mx-auto w-full max-w-2xl px-6">
                   <div className={`group/title relative ${cover ? 'z-10' : ''}`}>
                     <div className="pointer-events-none absolute top-0 left-0 flex h-7 items-center gap-1 opacity-0 transition-opacity group-hover/title:opacity-100 group-hover/title:pointer-events-auto group-focus-within/title:opacity-100 group-focus-within/title:pointer-events-auto">
                     {!icon ? (
@@ -1829,7 +1873,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="mx-auto w-2xl max-w-full px-6">
+                <div className="mx-auto w-full max-w-2xl px-6">
                   <div className="flex-1 min-h-[280px]">
                     <Editor
                       className="cn-editor h-full"
