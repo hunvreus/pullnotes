@@ -10,17 +10,25 @@ if (provider === 'd1') {
   process.exit(0)
 }
 
-const child = spawnSync(
-  'pnpm',
-  ['dlx', '@better-auth/cli@latest', 'migrate', '--config', 'src/lib/auth.ts', '--yes'],
-  {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      npm_config_cache: npmCache,
-    },
-    shell: process.platform === 'win32',
+const args = ['@better-auth/cli@latest', 'migrate', '--config', 'src/lib/auth.ts', '--yes']
+const command = hasCommand('pnpm') ? 'pnpm' : 'npx'
+const commandArgs = command === 'pnpm' ? ['dlx', ...args] : args
+
+const child = spawnSync(command, commandArgs, {
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    npm_config_cache: npmCache,
   },
-)
+  shell: process.platform === 'win32',
+})
 
 process.exit(child.status ?? 1)
+
+function hasCommand(command) {
+  const check = spawnSync(command, ['--version'], {
+    stdio: 'ignore',
+    shell: process.platform === 'win32',
+  })
+  return check.status === 0
+}
