@@ -1857,30 +1857,63 @@ function renderFolderNode(args: {
     toFileUrl,
   } = args
 
-  const folderParentFiles = new Set(
-    folder.folders
-      .map((subfolder) => `${subfolder.path}.md`)
-      .filter((path) => fileMap.has(path)),
+  const subfolderByParentFilePath = new Map<string, FolderNode>(
+    folder.folders.map((subfolder) => [`${subfolder.path}.md`, subfolder]),
   )
 
-  const visibleFiles = folder.files.filter((file) => !folderParentFiles.has(file.path))
-
-  const visibleFileItems = visibleFiles
-    .filter((file) => matchesSearch(file.path, searchTerm))
+  const fileItems = folder.files
+    .filter((file) => {
+      const subfolder = subfolderByParentFilePath.get(file.path)
+      if (!subfolder) return matchesSearch(file.path, searchTerm)
+      return matchesSearch(file.path, searchTerm) || hasMatchingChild(subfolder, searchTerm)
+    })
     .map((file) => (
       <SidebarMenuItem key={file.path}>
         <SidebarMenuButton
           isActive={selectedPath === file.path}
-          onClick={() => onSelectFile(file.path)}
-          className="[&>svg]:text-muted-foreground"
+          onClick={() => {
+            onSelectFile(file.path)
+            const subfolder = subfolderByParentFilePath.get(file.path)
+            if (subfolder && !expandedFolders.has(subfolder.path)) {
+              onToggleFolder(subfolder.path)
+            }
+          }}
+          className="[&>svg]:text-muted-foreground hover:[&_[data-tree-icon=default]]:opacity-0 hover:[&_[data-tree-icon=chevron]]:opacity-100"
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
         >
-          {!file.icon.trim() ? <FileText className="size-4 shrink-0" /> : null}
-          {file.icon.trim() ? (
+          {subfolderByParentFilePath.has(file.path) ? (
+            <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+              {!file.icon.trim() ? (
+                <FileText data-tree-icon="default" className="size-4 text-muted-foreground transition-opacity" />
+              ) : (
+                <span data-tree-icon="default" className="inline-flex size-4 items-center justify-center text-sm leading-none transition-opacity">
+                  {file.icon.trim()}
+                </span>
+              )}
+              <span
+                role="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  const subfolder = subfolderByParentFilePath.get(file.path)
+                  if (subfolder) onToggleFolder(subfolder.path)
+                }}
+                data-tree-icon="chevron"
+                className="absolute inset-0 inline-flex items-center justify-center opacity-0 transition-opacity"
+              >
+                {expandedFolders.has(subfolderByParentFilePath.get(file.path)?.path ?? '') ? (
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 text-muted-foreground" />
+                )}
+              </span>
+            </span>
+          ) : !file.icon.trim() ? (
+            <FileText className="size-4 shrink-0" />
+          ) : (
             <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
               {file.icon.trim()}
             </span>
-          ) : null}
+          )}
           <span>{entryTitle(file)}</span>
         </SidebarMenuButton>
         <DropdownMenu>
@@ -1912,106 +1945,40 @@ function renderFolderNode(args: {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {(() => {
+          const subfolder = subfolderByParentFilePath.get(file.path)
+          if (!subfolder || !expandedFolders.has(subfolder.path)) return null
+          return (
+            <SidebarMenuSub className="mr-0 pr-0">
+              {renderFolderNode({
+                folder: subfolder,
+                depth: depth + 1,
+                fileMap,
+                expandedFolders,
+                onToggleFolder,
+                onSelectFile,
+                selectedPath,
+                searchTerm,
+                onCreateChild,
+                onRename,
+                onDelete,
+                toFileUrl,
+              })}
+            </SidebarMenuSub>
+          )
+        })()}
       </SidebarMenuItem>
     ))
 
   const folderItems = folder.folders
     .map((subfolder) => {
       const parentFilePath = `${subfolder.path}.md`
-      const parentFile = fileMap.get(parentFilePath)
+      const parentFileExists = fileMap.has(parentFilePath)
       const isExpanded = expandedFolders.has(subfolder.path)
       const hasVisibleChild = hasMatchingChild(subfolder, searchTerm)
-      const parentMatches = parentFile ? matchesSearch(parentFile.path, searchTerm) : false
 
-      if (!hasVisibleChild && !parentMatches) {
+      if (parentFileExists || !hasVisibleChild) {
         return null
-      }
-
-      if (parentFile) {
-        return (
-          <SidebarMenuItem key={subfolder.path}>
-            <SidebarMenuButton
-              isActive={selectedPath === parentFile.path}
-              onClick={() => {
-                onSelectFile(parentFile.path)
-                if (!isExpanded) onToggleFolder(subfolder.path)
-              }}
-              className="[&>svg]:text-muted-foreground"
-              style={{ paddingLeft: `${depth * 14 + 8}px` }}
-            >
-              <span
-                role="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onToggleFolder(subfolder.path)
-                }}
-                className="inline-flex size-4 items-center justify-center"
-              >
-                {isExpanded ? (
-                  <ChevronDown className="size-3.5 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="size-3.5 text-muted-foreground" />
-                )}
-              </span>
-              {!parentFile.icon.trim() ? <FileText className="size-4 shrink-0" /> : null}
-              {parentFile.icon.trim() ? (
-                <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
-                  {parentFile.icon.trim()}
-                </span>
-              ) : null}
-              <span>{entryTitle(parentFile)}</span>
-            </SidebarMenuButton>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuAction className="right-2 text-muted-foreground peer-hover/menu-button:text-muted-foreground hover:text-foreground data-[state=open]:text-foreground">
-                  <Ellipsis />
-                  <span className="sr-only">Page options</span>
-                </SidebarMenuAction>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="right" sideOffset={6}>
-                <DropdownMenuItem asChild>
-                  <a href={toFileUrl(parentFile.path)} target="_blank" rel="noreferrer">
-                    Open on GitHub
-                    <DropdownMenuShortcut>
-                      <ExternalLink className="size-3.5" />
-                    </DropdownMenuShortcut>
-                  </a>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => onCreateChild(parentFile.path)}>
-                  Add child
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onRename(parentFile.path)}>
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" onSelect={() => onDelete(parentFile.path)}>
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {isExpanded ? (
-              <SidebarMenuSub className="mr-0 pr-0">
-                {renderFolderNode({
-                  folder: {
-                    ...subfolder,
-                    files: subfolder.files,
-                  },
-                  depth: depth + 1,
-                  fileMap,
-                  expandedFolders,
-                  onToggleFolder,
-                  onSelectFile,
-                  selectedPath,
-                  searchTerm,
-                  onCreateChild,
-                  onRename,
-                  onDelete,
-                  toFileUrl,
-                })}
-              </SidebarMenuSub>
-            ) : null}
-          </SidebarMenuItem>
-        )
       }
 
       return (
@@ -2052,7 +2019,7 @@ function renderFolderNode(args: {
 
   return (
     <>
-      {visibleFileItems}
+      {fileItems}
       {folderItems}
     </>
   )
