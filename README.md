@@ -51,7 +51,9 @@ cp .env.example .env
 - Better Auth:
   - `BETTER_AUTH_SECRET`
   - `BETTER_AUTH_URL` (for local: `http://localhost:4000` by default)
-  - `DB_PATH` (for local sqlite file)
+  - `AUTH_DB_PROVIDER` (`sqlite` by default, optional `d1`)
+  - `DB_PATH` (sqlite path; used when `AUTH_DB_PROVIDER=sqlite`)
+  - `DB_D1_BINDING` (D1 binding name; used when `AUTH_DB_PROVIDER=d1`)
 - GitHub App:
   - `GITHUB_APP_ID`
   - `GITHUB_APP_NAME`
@@ -65,12 +67,6 @@ Or run the setup helper to create the GitHub App and write these values for you:
 
 ```bash
 pnpm setup
-```
-
-For headless/server installs (no local browser callback), use:
-
-```bash
-pnpm setup -- --mode manual
 ```
 
 4. Start app:

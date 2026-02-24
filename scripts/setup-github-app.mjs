@@ -123,7 +123,9 @@ async function main() {
     BETTER_AUTH_URL: baseUrl,
     BETTER_AUTH_SECRET:
       process.env.BETTER_AUTH_SECRET || randomBytes(32).toString('base64url'),
+    AUTH_DB_PROVIDER: process.env.AUTH_DB_PROVIDER || 'sqlite',
     DB_PATH: process.env.DB_PATH || './data/auth.db',
+    DB_D1_BINDING: process.env.DB_D1_BINDING || 'DB',
     GITHUB_APP_ID: String(converted.id),
     GITHUB_APP_NAME: converted.slug,
     GITHUB_APP_CLIENT_ID: converted.client_id,
