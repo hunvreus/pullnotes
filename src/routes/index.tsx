@@ -197,13 +197,8 @@ function SelectorPage() {
   const showOwnersBootstrapSkeleton =
     (authPending && owners.length === 0) || (isAuthenticated && isLoadingOwners && owners.length === 0)
 
-  const viewerOwner = useMemo(
-    () => owners.find((item) => item.type === 'User' && item.login === viewerLogin) ?? null,
-    [owners, viewerLogin],
-  )
-
-  const nextInstallOwner = useMemo(
-    () => owners.find((item) => item.installationId === null) ?? null,
+  const hasAnyInstallation = useMemo(
+    () => owners.some((item) => item.installationId !== null),
     [owners],
   )
 
@@ -404,15 +399,6 @@ function SelectorPage() {
           </div>
         ) : null}
 
-        {viewerOwner && !viewerOwner.installationId && installUrl ? (
-          <div className="rounded-md border px-3 py-2 text-sm">
-            <p className="text-muted-foreground">App is not installed on your account yet.</p>
-            <a className="inline-block pt-2 underline" href={installUrl}>
-              Install app
-            </a>
-          </div>
-        ) : null}
-
         {owners.length === 0 ? (
           showOwnersBootstrapSkeleton ? (
             <>
@@ -445,6 +431,17 @@ function SelectorPage() {
             </div>
           </div>
           )
+        ) : !hasAnyInstallation ? (
+          <div className="rounded-md border px-3 py-4 text-sm">
+            <p className="text-muted-foreground">App is not installed on your account yet.</p>
+            {installUrl ? (
+              <a className="inline-block pt-2" href={installUrl}>
+                <Button type="button" variant="default" size="sm">
+                  Install the GitHub app
+                </Button>
+              </a>
+            ) : null}
+          </div>
         ) : (
           <>
             <div className="flex flex-col gap-2 sm:flex-row">
