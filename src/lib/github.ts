@@ -100,7 +100,14 @@ async function githubRequest<T>(
 ): Promise<T> {
   const url = `https://api.github.com${path}`
   const token = await getInstallationToken(target.owner, target.repo)
+  return githubRequestWithToken<T>(url, token, init)
+}
 
+async function githubRequestWithToken<T>(
+  url: string,
+  token: string,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -405,9 +412,13 @@ export async function upsertMarkdownFile(
     message: string
     sha?: string
   },
+  options?: {
+    userToken?: string
+  },
 ): Promise<{ sha: string }> {
   const target = normalizeTarget(targetInput)
   const fullPath = joinWithRoot(target.rootPath, input.path)
+  const url = `https://api.github.com/repos/${target.owner}/${target.repo}/contents/${encodeURIComponent(fullPath)}`
 
   const payload = {
     message: input.message,
@@ -416,14 +427,23 @@ export async function upsertMarkdownFile(
     sha: input.sha,
   }
 
-  const response = await githubRequest<{ content: { sha: string } }>(
-    target,
-    `/repos/${target.owner}/${target.repo}/contents/${encodeURIComponent(fullPath)}`,
-    {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    },
-  )
+  const response = options?.userToken
+    ? await (async () => {
+        // Enforce app installation scope even when writing as a user.
+        await getInstallationToken(target.owner, target.repo)
+        return githubRequestWithToken<{ content: { sha: string } }>(url, options.userToken, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        })
+      })()
+    : await githubRequest<{ content: { sha: string } }>(
+        target,
+        `/repos/${target.owner}/${target.repo}/contents/${encodeURIComponent(fullPath)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        },
+      )
 
   return { sha: response.content.sha }
 }
@@ -435,22 +455,33 @@ export async function deleteMarkdownFile(
     message: string
     sha: string
   },
+  options?: {
+    userToken?: string
+  },
 ): Promise<void> {
   const target = normalizeTarget(targetInput)
   const fullPath = joinWithRoot(target.rootPath, input.path)
+  const url = `https://api.github.com/repos/${target.owner}/${target.repo}/contents/${encodeURIComponent(fullPath)}`
+  const body = JSON.stringify({
+    message: input.message,
+    sha: input.sha,
+    branch: target.branch,
+  })
 
-  await githubRequest<unknown>(
-    target,
-    `/repos/${target.owner}/${target.repo}/contents/${encodeURIComponent(fullPath)}`,
-    {
+  if (options?.userToken) {
+    // Enforce app installation scope even when deleting as a user.
+    await getInstallationToken(target.owner, target.repo)
+    await githubRequestWithToken<unknown>(url, options.userToken, {
       method: 'DELETE',
-      body: JSON.stringify({
-        message: input.message,
-        sha: input.sha,
-        branch: target.branch,
-      }),
-    },
-  )
+      body,
+    })
+    return
+  }
+
+  await githubRequest<unknown>(target, `/repos/${target.owner}/${target.repo}/contents/${encodeURIComponent(fullPath)}`, {
+    method: 'DELETE',
+    body,
+  })
 }
 
 export async function getLatestCommit(input: RepoTargetInput): Promise<{

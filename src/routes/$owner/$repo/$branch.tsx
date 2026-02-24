@@ -75,7 +75,7 @@ import {
   upsertMarkdownFile,
 } from '#/lib/github'
 import { parseMarkdownEntry, serializeMarkdownEntry } from '#/lib/markdown'
-import { requireSession } from '#/lib/session'
+import { requireGitHubAccessToken, requireSession } from '#/lib/session'
 
 type RouteSearch = {
   root?: string
@@ -174,6 +174,7 @@ const saveFileServerFn = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }) => {
     await requireSession()
+    const userToken = await requireGitHubAccessToken()
 
     const content = serializeMarkdownEntry({
       title: data.title,
@@ -187,6 +188,8 @@ const saveFileServerFn = createServerFn({ method: 'POST' })
       content,
       message: `chore(pullnotes): update ${data.path}`,
       sha: data.sha,
+    }, {
+      userToken,
     })
   })
 
@@ -200,10 +203,13 @@ const deleteFileServerFn = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }) => {
     await requireSession()
+    const userToken = await requireGitHubAccessToken()
     await deleteMarkdownFile(data.target, {
       path: data.path,
       sha: data.sha,
       message: `chore(pullnotes): delete ${data.path}`,
+    }, {
+      userToken,
     })
     return { ok: true as const }
   })
@@ -920,6 +926,7 @@ function App() {
     setErrorMessage(null)
     const toastId = toast.loading('Deleting page...')
     try {
+      const nextPath = files.find((file) => file.path !== selectedPath)?.path ?? null
       await deleteFile({
         data: {
           target: activeTarget,
@@ -927,19 +934,24 @@ function App() {
           sha,
         },
       })
-      setSelectedPathAndUrl(null, true)
-      setTitle('')
-      setIcon('')
-      setCover('')
-      setBody('')
-      setSha(undefined)
-      setHasLoadedFile(false)
-      setLoadedPath(null)
-      setSavedTitle('')
-      setSavedIcon('')
-      setSavedCover('')
-      setSavedBody('')
-      await refreshFiles()
+
+      if (nextPath) {
+        await refreshFiles({ preferredPath: nextPath })
+      } else {
+        setSelectedPathAndUrl(null, true)
+        setTitle('')
+        setIcon('')
+        setCover('')
+        setBody('')
+        setSha(undefined)
+        setHasLoadedFile(false)
+        setLoadedPath(null)
+        setSavedTitle('')
+        setSavedIcon('')
+        setSavedCover('')
+        setSavedBody('')
+        await refreshFiles()
+      }
       await loadRecentCommits()
       toast.success('Page deleted', { id: toastId })
     } catch (error) {
@@ -1001,6 +1013,8 @@ function App() {
     setErrorMessage(null)
     const toastId = toast.loading('Deleting page...')
     try {
+      const nextPath =
+        selectedPath === path ? files.find((file) => file.path !== path)?.path ?? null : null
       const loaded =
         selectedPath === path && hasLoadedFile && loadedPath === path && sha
           ? { sha }
@@ -1020,20 +1034,26 @@ function App() {
       })
 
       if (selectedPath === path) {
-        setSelectedPathAndUrl(null, true)
-        setTitle('')
-        setIcon('')
-        setCover('')
-        setBody('')
-        setSha(undefined)
-        setHasLoadedFile(false)
-        setLoadedPath(null)
-        setSavedTitle('')
-        setSavedIcon('')
-        setSavedCover('')
-        setSavedBody('')
+        if (nextPath) {
+          await refreshFiles({ preferredPath: nextPath })
+        } else {
+          setSelectedPathAndUrl(null, true)
+          setTitle('')
+          setIcon('')
+          setCover('')
+          setBody('')
+          setSha(undefined)
+          setHasLoadedFile(false)
+          setLoadedPath(null)
+          setSavedTitle('')
+          setSavedIcon('')
+          setSavedCover('')
+          setSavedBody('')
+          await refreshFiles()
+        }
+      } else {
+        await refreshFiles()
       }
-      await refreshFiles()
       await loadRecentCommits()
       toast.success('Page deleted', { id: toastId })
     } catch (error) {
