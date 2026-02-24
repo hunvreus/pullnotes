@@ -81,6 +81,7 @@ async function main() {
     default_permissions: {
       contents: 'write',
       metadata: 'read',
+      emails: 'read',
     },
     // Better Auth already handles GitHub OAuth login separately.
     request_oauth_on_install: false,

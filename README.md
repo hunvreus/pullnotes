@@ -1,123 +1,119 @@
 # PullNotes
 
-Very simple Markdown editor for GitHub repos, built with:
+Minimal Notion-style Markdown editor for GitHub repositories.
+
+## Stack
 
 - TanStack Start
 - shadcn/ui
-- Pages Editor component (`editor.pagescms.org`)
-- Better Auth (GitHub login)
-- GitHub App installation tokens (repo read/write)
+- Pages CMS editor (`editor.pagescms.org`)
+- Better Auth (GitHub OAuth)
+- GitHub App (installation + repo access model)
 
-## Content model
+## Data model
 
-Markdown files are stored as:
+Each page is one Markdown file with:
 
-```md
----
-icon: 🚀
-cover: https://images.pexels.com/photos/...
----
+- `title`: first `# H1` in document body (required)
+- `body`: remaining Markdown content
+- `icon`: optional frontmatter
+- `cover`: optional frontmatter
 
-# My title
+Hierarchy is folder-based only:
 
-Body markdown
-```
+- `setup.md` is parent
+- `setup/step-1.md` is a child
 
-- `title`: first H1 in the document body.
-- `icon`: optional frontmatter field.
-- `cover`: optional frontmatter field.
-- hierarchy: filesystem-only (folders).
+Deleting a parent page cascades to all its children.
 
-Example:
-- parent: `setup.md`
-- children: `setup/*.md`
+## Auth and GitHub model
 
-## Setup
+PullNotes uses a hybrid model:
 
-1. Install dependencies:
+- GitHub App installation controls which repos are accessible.
+- GitHub OAuth user token performs write/delete operations.
+
+This keeps repo access scoped by App install, while commits are attributed to the signed-in user.
+
+## Local setup
+
+1. Install deps:
 
 ```bash
 pnpm install
 ```
 
-2. Create env file:
-
-```bash
-cp .env.example .env
-```
-
-3. Fill `.env`:
-
-- Better Auth:
-  - `BETTER_AUTH_SECRET`
-  - `BETTER_AUTH_URL` (for local: `http://localhost:4000` by default)
-  - `AUTH_DB_PROVIDER` (`sqlite` by default, optional `d1`)
-  - `DB_PATH` (sqlite path; used when `AUTH_DB_PROVIDER=sqlite`)
-  - `DB_D1_BINDING` (D1 binding name; used when `AUTH_DB_PROVIDER=d1`)
-- GitHub App:
-  - `GITHUB_APP_ID`
-  - `GITHUB_APP_NAME`
-  - `GITHUB_APP_PRIVATE_KEY` (full PEM contents)
-  - `GITHUB_APP_CLIENT_ID`
-  - `GITHUB_APP_CLIENT_SECRET`
-- Cover search:
-  - `PEXELS_API_KEY`
-
-Or run the setup helper to create the GitHub App and write these values for you:
+2. Run setup wizard:
 
 ```bash
 pnpm setup
 ```
 
-4. Start app:
+This creates/configures a GitHub App from a manifest and writes `.env`.
+
+3. Start dev:
 
 ```bash
 pnpm dev
 ```
 
-`pnpm dev` always runs `auth:migrate` first.
+`pnpm dev` runs auth migrations automatically before starting.
 
-5. Optional: run migrations manually (for auth schema upgrades):
+## Required env vars
 
-```bash
-pnpm auth:migrate
-```
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_URL`
+- `AUTH_DB_PROVIDER` (`sqlite` or `d1`)
+- `DB_PATH` (for sqlite)
+- `DB_D1_BINDING` (for d1 runtime binding name)
+- `GITHUB_APP_ID`
+- `GITHUB_APP_NAME`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_CLIENT_ID`
+- `GITHUB_APP_CLIENT_SECRET`
+- `PEXELS_API_KEY` (cover image search)
 
-## App flow
+## GitHub App requirements
 
-1. Sign in with GitHub.
-2. Home page is a repo selector (account + repo search).
-3. Open a repo and branch via route: `/:owner/:repo/:branch` (optional `?root=...`).
-4. Edit content in a Notion-like layout (sidebar tree + editor pane).
+Callbacks:
+
+- OAuth callback URL: `https://<your-domain>/api/auth/callback/github`
+- Setup URL: `https://<your-domain>/api/github-app/callback`
+- Redirect on update: enabled
+
+Permissions:
+
+- Repository: `Contents` = Read & write
+- Repository: `Metadata` = Read-only
+- Account: `Email addresses` = Read-only
+
+Without `Email addresses: Read-only`, some users can hit `?error=email_not_found`.
+
+## Routing
+
+- Home selector: `/`
+- Repo editor: `/:owner/:repo/:branch`
+- Optional query params:
+  - `file`: selected file path
+  - `root`: optional subfolder root
 
 ## Editor behavior
 
-- Save button states:
-  - check = clean
-  - save icon = unsaved changes
-  - spinner = saving
+- Save state icons:
+  - clean: check
+  - dirty: save
+  - saving: loader
 - Keyboard save: `Cmd+S` / `Ctrl+S`
-- Title is required to save/create.
-- `ArrowDown` in title focuses body editor.
-- `ArrowUp` at start of body focuses title.
-- Cover:
-  - top, full-width image
-  - search + select from Pexels
-  - URL validation accepts Pexels and Unsplash hosts
-- Icon:
-  - emoji picker with search
-  - sidebar and breadcrumb show emoji + title
+- Sidebar shortcut `Cmd/Ctrl+B` is disabled
+- Top content header is hidden when repo has no files
+- Empty repos use shadcn `Empty` state
+- Cover picker uses Pexels API
+- Icon picker supports emoji search
 
-## Loading / empty states
+## Deploy notes
 
-- Skeletons for repo and file loading.
-- Empty state component when repo has no markdown entries.
+- Build: `pnpm build` (or `npm run build`)
+- Start: `npm start`
+- Server must run on port `8000` in hosted environments
 
-## GitHub App notes
-
-1. OAuth callback URL should be Better Auth callback:
-   - `http://localhost:4000/api/auth/callback/github`
-2. Install the app on the account/repo you want to edit.
-3. Required permissions:
-   - Contents: Read and write
-   - Metadata: Read-only
+If using sqlite in production, ensure persistent disk. For serverless/ephemeral environments, prefer `AUTH_DB_PROVIDER=d1`.
