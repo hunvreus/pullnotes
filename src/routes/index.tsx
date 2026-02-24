@@ -2,13 +2,18 @@ import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn, useServerFn } from '@tanstack/react-start'
 import { ArrowBigDown, Check, ChevronsUpDown, Loader2, Lock, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#/components/ui/card'
 import {
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '#/components/ui/dropdown-menu'
 import { Input } from '#/components/ui/input'
@@ -42,6 +47,8 @@ type RouteSearch = {
   repo?: string
   branch?: string
 }
+
+type ThemeMode = 'system' | 'dark' | 'light'
 
 type OwnersCache = {
   owners: OwnerItem[]
@@ -191,6 +198,7 @@ function SelectorPage() {
   const [isLoadingOwners, setIsLoadingOwners] = useState(false)
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system')
   const isAuthenticated = Boolean(authSession?.user)
   const installedOwners = useMemo(
     () => owners.filter((item) => item.installationId !== null),
@@ -285,6 +293,29 @@ function SelectorPage() {
   }, [authPending, isAuthenticated])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const nextTheme = window.localStorage.getItem('theme')
+    if (nextTheme === 'dark' || nextTheme === 'light' || nextTheme === 'system') {
+      setThemeMode(nextTheme)
+    } else {
+      setThemeMode('system')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const root = window.document.documentElement
+    window.localStorage.setItem('theme', themeMode)
+    const resolvedTheme =
+      themeMode === 'system'
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light'
+        : themeMode
+    root.classList.toggle('dark', resolvedTheme === 'dark')
+  }, [themeMode])
+
+  useEffect(() => {
     if (!isAuthenticated || !selectedOwnerItem || !selectedOwnerItem.installationId) {
       setRepos([])
       return
@@ -320,6 +351,11 @@ function SelectorPage() {
       provider: 'github',
       callbackURL: '/',
     })
+  }
+
+  const handleSignOut = async () => {
+    await authClient.signOut()
+    await navigate({ to: '/' })
   }
 
   const openRepo = async (repo: RepoItem) => {
@@ -382,7 +418,7 @@ function SelectorPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center p-6">
+    <main className="relative grid min-h-screen place-items-center px-6 py-16">
       <Card className="w-full max-w-xl gap-4 py-4">
         <CardHeader>
           <div className="space-y-1">
@@ -434,7 +470,6 @@ function SelectorPage() {
           )
         ) : !hasAnyInstallation ? (
           <div className="flex h-[17.75rem] flex-col items-center justify-center gap-3 text-center text-sm">
-            <p className="text-muted-foreground">App is not installed on your account yet.</p>
             {installUrl ? (
               <a href={installUrl}>
                 <Button type="button" variant="default" size="sm">
@@ -562,6 +597,49 @@ function SelectorPage() {
         )}
         </CardContent>
       </Card>
+
+      <div className="absolute bottom-6 left-6 size-8">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" className="size-full rounded-full p-0">
+              <Avatar className="size-8 rounded-full">
+                <AvatarImage
+                  src={authSession?.user?.image || (viewerLogin ? `https://github.com/${viewerLogin}.png` : undefined)}
+                  alt={authSession?.user?.name || authSession?.user?.email || 'User'}
+                />
+                <AvatarFallback>
+                  {(authSession?.user?.name || authSession?.user?.email || viewerLogin || 'U').slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" sideOffset={8}>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Theme
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={themeMode}
+                onValueChange={(value) => setThemeMode(value as ThemeMode)}
+              >
+                <DropdownMenuRadioItem value="system">
+                  System
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="dark">
+                  Dark
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="light">
+                  Light
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => void handleSignOut()}>
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </main>
   )
 }
