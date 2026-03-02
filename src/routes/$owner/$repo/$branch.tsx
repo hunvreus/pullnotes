@@ -16,8 +16,9 @@ import {
   Search,
   SmilePlus,
 } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
-import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
 import {
   Breadcrumb,
@@ -100,6 +101,16 @@ type CoverPhoto = {
   alt: string
   authorName: string
   authorUrl: string
+}
+
+type CachedMarkdownFile = {
+  version: 1
+  sha: string
+  title: string
+  icon: string
+  cover: string
+  body: string
+  updatedAt: number
 }
 
 const ICON_OPTIONS: EmojiOption[] = [
@@ -341,7 +352,6 @@ export function App() {
     authorAvatarUrl: string | null
     date: string | null
   }>>([])
-  const [themeMode, setThemeMode] = useState<ThemeMode>('system')
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false)
   const [emojiQuery, setEmojiQuery] = useState('')
   const [allEmojiOptions, setAllEmojiOptions] = useState<EmojiOption[] | null>(null)
@@ -387,6 +397,9 @@ export function App() {
   const tree = useMemo(() => buildTree(files), [files])
   const fileMap = useMemo(() => new Map(files.map((file) => [file.path, file])), [files])
   const isAuthenticated = Boolean(authSession?.user)
+  const { theme, setTheme } = useTheme()
+  const themeMode: ThemeMode =
+    theme === 'dark' || theme === 'light' || theme === 'system' ? theme : 'system'
   const titleMissing = title.trim().length === 0
   const filteredEmojiOptions = useMemo(() => {
     const query = emojiQuery.trim().toLowerCase()
@@ -616,9 +629,29 @@ export function App() {
   useEffect(() => {
     if (!selectedPath || !isAuthenticated) return
 
-    const load = async () => {
-      setIsLoadingFile(true)
+    const expectedSha = fileMap.get(selectedPath)?.sha
+    const cached = readCachedMarkdownFile(activeTarget, selectedPath)
+    const canUseCached = Boolean(cached && (!expectedSha || cached.sha === expectedSha))
+    let cancelled = false
+
+    if (canUseCached && cached) {
+      setTitle(cached.title)
+      setIcon(cached.icon)
+      setCover(cached.cover)
+      setBody(cached.body)
+      setSha(cached.sha)
+      setLoadedPath(selectedPath)
+      setSavedTitle(cached.title)
+      setSavedIcon(cached.icon)
+      setSavedCover(cached.cover)
+      setSavedBody(cached.body)
+      setHasLoadedFile(true)
+    } else {
       setHasLoadedFile(false)
+    }
+
+    const load = async () => {
+      setIsLoadingFile(!canUseCached)
       setErrorMessage(null)
 
       try {
@@ -628,6 +661,7 @@ export function App() {
             path: selectedPath,
           },
         })
+        if (cancelled) return
 
         setTitle(file.title)
         setIcon(file.icon)
@@ -640,42 +674,29 @@ export function App() {
         setSavedCover(file.cover)
         setSavedBody(file.body)
         setHasLoadedFile(true)
+        writeCachedMarkdownFile(activeTarget, file.path, {
+          sha: file.sha,
+          title: file.title,
+          icon: file.icon,
+          cover: file.cover,
+          body: file.body,
+        })
       } catch (error) {
-        setErrorMessage(errorToMessage(error))
+        if (cancelled) return
+        const message = errorToMessage(error)
+        setErrorMessage(
+          canUseCached ? `Showing cached content. Could not refresh from GitHub: ${message}` : message,
+        )
       } finally {
-        setIsLoadingFile(false)
+        if (!cancelled) setIsLoadingFile(false)
       }
     }
 
     void load()
-  }, [selectedPath, getFile, isAuthenticated, activeTarget])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const nextTheme = window.localStorage.getItem('theme')
-    if (nextTheme === 'dark' || nextTheme === 'light' || nextTheme === 'system') {
-      setThemeMode(nextTheme)
+    return () => {
+      cancelled = true
     }
-  }, [])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    window.localStorage.setItem('theme', themeMode)
-
-    const root = document.documentElement
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-
-    const syncTheme = () => {
-      const resolved = themeMode === 'system' ? (mediaQuery.matches ? 'dark' : 'light') : themeMode
-      root.classList.toggle('dark', resolved === 'dark')
-    }
-
-    syncTheme()
-    mediaQuery.addEventListener('change', syncTheme)
-    return () => mediaQuery.removeEventListener('change', syncTheme)
-  }, [themeMode])
+  }, [selectedPath, getFile, isAuthenticated, activeTarget, fileMap])
 
   const focusEditor = () => {
     const editorEl = editorRegionRef.current?.querySelector('.ProseMirror') as HTMLElement | null
@@ -750,6 +771,13 @@ export function App() {
       setSavedIcon(icon)
       setSavedCover(cover)
       setSavedBody(body)
+      writeCachedMarkdownFile(activeTarget, selectedPath, {
+        sha: result.sha,
+        title: cleanTitle,
+        icon,
+        cover,
+        body,
+      })
       await refreshFiles()
       await loadRecentCommits()
       toast.success('Saved', { id: toastId })
@@ -803,7 +831,7 @@ export function App() {
     const toastId = toast.loading('Creating page...')
 
     try {
-      await saveFile({
+      const result = await saveFile({
         data: {
           target: activeTarget,
           path: targetPath,
@@ -812,6 +840,13 @@ export function App() {
           cover: '',
           body: '',
         },
+      })
+      writeCachedMarkdownFile(activeTarget, targetPath, {
+        sha: result.sha,
+        title: cleanTitle,
+        icon: '',
+        cover: '',
+        body: '',
       })
 
       await refreshFiles({ preferredPath: targetPath })
@@ -852,7 +887,7 @@ export function App() {
     const toastId = toast.loading('Creating child page...')
 
     try {
-      await saveFile({
+      const result = await saveFile({
         data: {
           target: activeTarget,
           path: targetPath,
@@ -861,6 +896,13 @@ export function App() {
           cover: '',
           body: '',
         },
+      })
+      writeCachedMarkdownFile(activeTarget, targetPath, {
+        sha: result.sha,
+        title: cleanTitle,
+        icon: '',
+        cover: '',
+        body: '',
       })
 
       await refreshFiles({ preferredPath: targetPath })
@@ -953,6 +995,9 @@ export function App() {
         path: selectedPath,
         sha,
       })
+      for (const path of deletedPaths) {
+        deleteCachedMarkdownFile(activeTarget, path)
+      }
 
       if (nextPath) {
         await refreshFiles({ preferredPath: nextPath })
@@ -1057,6 +1102,9 @@ export function App() {
         path,
         sha: loaded.sha,
       })
+      for (const deletedPath of deletedPaths) {
+        deleteCachedMarkdownFile(activeTarget, deletedPath)
+      }
 
       if (selectionIsDeleted) {
         if (nextPath) {
@@ -1144,7 +1192,7 @@ export function App() {
       ),
     )
 
-    await saveFile({
+    const movedRoot = await saveFile({
       data: {
         target: activeTarget,
         path: input.newPath,
@@ -1154,11 +1202,19 @@ export function App() {
         body: input.oldFile.body,
       },
     })
+    writeCachedMarkdownFile(activeTarget, input.newPath, {
+      sha: movedRoot.sha,
+      title: input.oldFile.title,
+      icon: input.oldFile.icon,
+      cover: input.oldFile.cover,
+      body: input.oldFile.body,
+    })
+    deleteCachedMarkdownFile(activeTarget, input.oldPath)
 
     for (const child of childFiles) {
       const suffix = child.path.slice(`${oldDir}/`.length)
       const nextChildPath = `${newDir}/${suffix}`
-      await saveFile({
+      const movedChild = await saveFile({
         data: {
           target: activeTarget,
           path: nextChildPath,
@@ -1168,6 +1224,14 @@ export function App() {
           body: child.body,
         },
       })
+      writeCachedMarkdownFile(activeTarget, nextChildPath, {
+        sha: movedChild.sha,
+        title: child.title,
+        icon: child.icon,
+        cover: child.cover,
+        body: child.body,
+      })
+      deleteCachedMarkdownFile(activeTarget, child.path)
     }
 
     const deletes = [
@@ -1377,7 +1441,7 @@ export function App() {
                       </DropdownMenuLabel>
                       <DropdownMenuRadioGroup
                         value={themeMode}
-                        onValueChange={(value) => setThemeMode(value as ThemeMode)}
+                        onValueChange={(value) => setTheme(value as ThemeMode)}
                       >
                         <DropdownMenuRadioItem value="system">
                           System
@@ -1422,42 +1486,44 @@ export function App() {
                       {breadcrumbs.map((crumb, index) => {
                         const isLast = index === breadcrumbs.length - 1
                         return (
-                          <BreadcrumbItem key={crumb.path} className="min-w-0">
-                            {isLast ? (
-                              <BreadcrumbPage className="flex min-w-0 items-center gap-1">
-                                {crumb.icon ? (
-                                  <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
-                                    {crumb.icon}
-                                  </span>
-                                ) : null}
-                                <span className="truncate">{crumb.label}</span>
-                              </BreadcrumbPage>
-                            ) : (
-                              <BreadcrumbLink asChild>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedPathAndUrl(crumb.path)}
-                                    className="flex min-w-0 items-center gap-1"
-                                  >
+                          <Fragment key={crumb.path}>
+                            <BreadcrumbItem className="min-w-0">
+                              {isLast ? (
+                                <BreadcrumbPage className="flex min-w-0 items-center gap-1">
                                   {crumb.icon ? (
                                     <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
                                       {crumb.icon}
                                     </span>
                                   ) : null}
                                   <span className="truncate">{crumb.label}</span>
-                                </button>
-                              </BreadcrumbLink>
-                            )}
+                                </BreadcrumbPage>
+                              ) : (
+                                <BreadcrumbLink asChild>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedPathAndUrl(crumb.path)}
+                                    className="flex min-w-0 items-center gap-1"
+                                  >
+                                    {crumb.icon ? (
+                                      <span className="inline-flex size-4 shrink-0 items-center justify-center text-sm leading-none">
+                                        {crumb.icon}
+                                      </span>
+                                    ) : null}
+                                    <span className="truncate">{crumb.label}</span>
+                                  </button>
+                                </BreadcrumbLink>
+                              )}
+                            </BreadcrumbItem>
                             {!isLast ? <BreadcrumbSeparator /> : null}
-                          </BreadcrumbItem>
+                          </Fragment>
                         )
                       })}
                     </BreadcrumbList>
                   </Breadcrumb>
                 ) : (
-                  <p className="truncate text-sm font-medium">
+                  <div className="truncate text-sm font-medium">
                     {isLoadingRepo ? <Skeleton className="h-5 w-30 rounded-md" /> : 'No file selected'}
-                  </p>
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -2202,6 +2268,87 @@ function buildTree(files: MarkdownFile[]): FolderNode {
   root.files = files.filter((file) => !file.path.includes('/'))
 
   return root
+}
+
+const FILE_CACHE_PREFIX = 'pullnotes:md-file-cache:v1'
+
+function buildTargetCachePrefix(target: RepoTargetInput): string {
+  return [
+    FILE_CACHE_PREFIX,
+    encodeURIComponent(target.owner || ''),
+    encodeURIComponent(target.repo || ''),
+    encodeURIComponent(target.branch || ''),
+    encodeURIComponent((target.rootPath || '').replace(/^\/+|\/+$/g, '')),
+  ].join(':')
+}
+
+function buildFileCacheKey(target: RepoTargetInput, path: string): string {
+  return `${buildTargetCachePrefix(target)}:${encodeURIComponent(path)}`
+}
+
+function readCachedMarkdownFile(
+  target: RepoTargetInput,
+  path: string,
+): CachedMarkdownFile | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const raw = window.localStorage.getItem(buildFileCacheKey(target, path))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as CachedMarkdownFile
+    if (
+      parsed &&
+      parsed.version === 1 &&
+      typeof parsed.sha === 'string' &&
+      typeof parsed.title === 'string' &&
+      typeof parsed.icon === 'string' &&
+      typeof parsed.cover === 'string' &&
+      typeof parsed.body === 'string'
+    ) {
+      return parsed
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function writeCachedMarkdownFile(
+  target: RepoTargetInput,
+  path: string,
+  input: {
+    sha: string
+    title: string
+    icon: string
+    cover: string
+    body: string
+  },
+) {
+  if (typeof window === 'undefined') return
+  try {
+    const payload: CachedMarkdownFile = {
+      version: 1,
+      sha: input.sha,
+      title: input.title,
+      icon: input.icon,
+      cover: input.cover,
+      body: input.body,
+      updatedAt: Date.now(),
+    }
+    window.localStorage.setItem(buildFileCacheKey(target, path), JSON.stringify(payload))
+  } catch {
+    // Ignore localStorage write failures (quota/private mode).
+  }
+}
+
+function deleteCachedMarkdownFile(target: RepoTargetInput, path: string) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(buildFileCacheKey(target, path))
+  } catch {
+    // Ignore localStorage remove failures.
+  }
 }
 
 function dirname(path: string): string {

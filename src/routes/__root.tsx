@@ -2,7 +2,6 @@ import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import { ThemeProvider } from 'next-themes'
-import { useEffect } from 'react'
 import { Toaster } from '#/components/ui/sonner'
 import { TooltipProvider } from '#/components/ui/tooltip'
 
@@ -38,29 +37,13 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const root = document.documentElement
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const storedTheme = window.localStorage.getItem('theme')
-    const themeMode =
-      storedTheme === 'dark' || storedTheme === 'light' || storedTheme === 'system'
-        ? storedTheme
-        : 'system'
-
-    const resolvedTheme =
-      themeMode === 'system' ? (mediaQuery.matches ? 'dark' : 'light') : themeMode
-    root.classList.toggle('dark', resolvedTheme === 'dark')
-  }, [])
-
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <TooltipProvider>
             {children}
             <Toaster />
