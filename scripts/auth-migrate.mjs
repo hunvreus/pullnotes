@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
@@ -10,7 +11,8 @@ if (provider === 'd1') {
   process.exit(0)
 }
 
-const args = ['@better-auth/cli@latest', 'migrate', '--config', 'src/lib/auth.ts', '--yes']
+const cliVersion = resolveBetterAuthCliVersion()
+const args = [`@better-auth/cli@${cliVersion}`, 'migrate', '--config', 'src/lib/auth.ts', '--yes']
 const command = hasCommand('pnpm') ? 'pnpm' : 'npx'
 const commandArgs = command === 'pnpm' ? ['dlx', ...args] : args
 
@@ -24,6 +26,23 @@ const child = spawnSync(command, commandArgs, {
 })
 
 process.exit(child.status ?? 1)
+
+function resolveBetterAuthCliVersion() {
+  try {
+    const packageJsonPath = resolve(process.cwd(), 'package.json')
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+    const declared =
+      packageJson?.dependencies?.['better-auth'] ||
+      packageJson?.devDependencies?.['better-auth'] ||
+      ''
+    const cleaned = String(declared).trim().replace(/^[~^]/, '')
+    if (cleaned) return cleaned
+  } catch {
+    // Fall through to the safe default below.
+  }
+
+  return '1.4.18'
+}
 
 function hasCommand(command) {
   const check = spawnSync(command, ['--version'], {
