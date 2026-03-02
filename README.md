@@ -1,5 +1,7 @@
 # PullNotes
 
+https://github.com/user-attachments/assets/959e2a7c-b574-436b-9394-99501401793e
+
 Minimal Notion-style Markdown editor for GitHub repositories.
 
 ## Stack
