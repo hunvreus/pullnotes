@@ -93,6 +93,19 @@ function trimRoot(rootPath: string, path: string): string {
   return path.startsWith(`${rootPath}/`) ? path.slice(rootPath.length + 1) : path
 }
 
+function isMarkdownPath(path: string): boolean {
+  return path.endsWith('.md')
+}
+
+function isPrivateFolderName(name: string): boolean {
+  return name.startsWith('_')
+}
+
+function hasPrivateFolderInPath(path: string): boolean {
+  const parts = path.split('/').filter(Boolean)
+  return parts.some((part) => part.startsWith('_'))
+}
+
 async function githubRequest<T>(
   target: RepoTarget,
   path: string,
@@ -290,6 +303,8 @@ export async function listMarkdownEntriesViaGraphql(
   input: RepoTargetInput,
 ): Promise<RepoMarkdownMetaEntry[]> {
   const target = normalizeTarget(input)
+  if (hasPrivateFolderInPath(target.rootPath)) return []
+
   const rootExpression = target.rootPath
     ? `${target.branch}:${target.rootPath}`
     : `${target.branch}:`
@@ -301,7 +316,7 @@ export async function listMarkdownEntriesViaGraphql(
       const nextPath = `${prefix}${entry.name}`
 
       if (entry.type === 'blob') {
-        if (!nextPath.endsWith('.md')) continue
+        if (!isMarkdownPath(nextPath)) continue
         if (!entry.object || entry.object.__typename !== 'Blob') continue
 
         const content = entry.object.text || ''
@@ -316,6 +331,7 @@ export async function listMarkdownEntriesViaGraphql(
         continue
       }
 
+      if (isPrivateFolderName(entry.name)) continue
       if (!entry.object || entry.object.__typename !== 'Tree') continue
       const subtree = await fetchTreeEntriesByOid(target, entry.object.oid)
       await walk(subtree, `${nextPath}/`)
@@ -348,6 +364,8 @@ export async function listMarkdownEntriesViaGraphql(
 
 export async function listMarkdownFiles(input: RepoTargetInput): Promise<RepoMarkdownEntry[]> {
   const target = normalizeTarget(input)
+  if (hasPrivateFolderInPath(target.rootPath)) return []
+
   let tree: GitHubTreeResponse
   try {
     tree = await githubRequest<GitHubTreeResponse>(
@@ -370,10 +388,11 @@ export async function listMarkdownFiles(input: RepoTargetInput): Promise<RepoMar
   }
 
   return tree.tree
-    .filter((item) => item.type === 'blob' && item.path.endsWith('.md'))
+    .filter((item) => item.type === 'blob' && isMarkdownPath(item.path))
     .filter((item) =>
       target.rootPath ? item.path.startsWith(`${target.rootPath}/`) : true,
     )
+    .filter((item) => !hasPrivateFolderInPath(trimRoot(target.rootPath, item.path)))
     .map((item) => ({
       path: trimRoot(target.rootPath, item.path),
       sha: item.sha,

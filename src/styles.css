@@ -217,6 +217,11 @@ code {
   @apply my-4 ml-6 list-decimal;
 }
 
+.cn-editor .tiptap li > ul,
+.cn-editor .tiptap li > ol {
+  @apply my-0;
+}
+
 .cn-editor .tiptap blockquote {
   @apply mt-6 border-l-2 pl-6 italic;
 }

@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { createServerFn, useServerFn } from '@tanstack/react-start'
 import {
   Check,
@@ -291,15 +291,18 @@ export const Route = createFileRoute('/$owner/$repo/$branch')({
       file: typeof raw.file === 'string' ? raw.file : undefined,
     }
   },
-  loader: async () => [],
   component: App,
 })
 
-function App() {
-  const initialFiles = Route.useLoaderData()
-  const routeSearch = Route.useSearch()
-  const params = Route.useParams()
-  const navigate = Route.useNavigate()
+export function App() {
+  const routeSearch = useSearch({ strict: false }) as RouteSearch
+  const params = useParams({ strict: false }) as {
+    owner?: string
+    repo?: string
+    branch?: string
+    _splat?: string
+  }
+  const navigate = useNavigate()
 
   const listFiles = useServerFn(listFilesServerFn)
   const getFile = useServerFn(getFileServerFn)
@@ -312,7 +315,7 @@ function App() {
   const titleInputRef = useRef<HTMLInputElement>(null)
   const editorRegionRef = useRef<HTMLDivElement>(null)
 
-  const [files, setFiles] = useState<MarkdownFile[]>(initialFiles)
+  const [files, setFiles] = useState<MarkdownFile[]>([])
   const [filterQuery, setFilterQuery] = useState('')
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set(['']))
@@ -350,14 +353,19 @@ function App() {
   const [coverSearchError, setCoverSearchError] = useState<string | null>(null)
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
 
-  const owner = params.owner.trim()
-  const repo = params.repo.trim()
-  const branch = params.branch.trim()
+  const owner = String(params.owner || '').trim()
+  const repo = String(params.repo || '').trim()
+  const branch = String(params.branch || '').trim()
   const rootPath = (routeSearch.root || '').replace(/^\/+|\/+$/g, '')
+  const filePathFromRoute =
+    typeof params._splat === 'string' && params._splat.trim()
+      ? decodePathFromUrl(params._splat)
+      : null
   const filePathFromSearch =
     typeof routeSearch.file === 'string'
       ? routeSearch.file.replace(/^\/+|\/+$/g, '').trim() || null
       : null
+  const filePathFromUrl = filePathFromRoute || filePathFromSearch
 
   const activeTarget = useMemo(
     () => ({ owner, repo, branch, rootPath }),
@@ -366,13 +374,14 @@ function App() {
 
   const setSelectedPathAndUrl = (nextPath: string | null, replace = false) => {
     setSelectedPath(nextPath)
-    void navigate({
-      search: (prev) => ({
-        ...prev,
-        file: nextPath || undefined,
-      }),
-      replace,
+    const nextUrl = buildEditorUrl({
+      owner,
+      repo,
+      branch,
+      rootPath,
+      filePath: nextPath,
     })
+    void navigate({ to: nextUrl as any, replace })
   }
 
   const tree = useMemo(() => buildTree(files), [files])
@@ -520,9 +529,9 @@ function App() {
       return
     }
 
-    if (filePathFromSearch && nextPaths.has(filePathFromSearch)) {
-      if (selectedPath !== filePathFromSearch) {
-        setSelectedPath(filePathFromSearch)
+    if (filePathFromUrl && nextPaths.has(filePathFromUrl)) {
+      if (selectedPath !== filePathFromUrl) {
+        setSelectedPath(filePathFromUrl)
       }
       return
     }
@@ -534,14 +543,20 @@ function App() {
       return
     }
 
-    if (selectedPath || filePathFromSearch) {
+    if (selectedPath || filePathFromUrl) {
       setSelectedPathAndUrl(null, true)
     }
   }
 
   useEffect(() => {
-    setSelectedPath(filePathFromSearch)
-  }, [filePathFromSearch])
+    setSelectedPath(filePathFromUrl)
+  }, [filePathFromUrl])
+
+  useEffect(() => {
+    // Backward compatibility: migrate legacy ?file=... links to path-based URLs.
+    if (!filePathFromSearch || filePathFromRoute) return
+    setSelectedPathAndUrl(filePathFromSearch, true)
+  }, [filePathFromRoute, filePathFromSearch])
 
   useEffect(() => {
     setFiles([])
@@ -2264,6 +2279,41 @@ function isAllowedCoverUrl(value: string): boolean {
 
 function normalizeBodyForCompare(value: string): string {
   return value.replace(/\r\n/g, '\n').trimEnd()
+}
+
+function encodePathForUrl(path: string): string {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+}
+
+function decodePathFromUrl(path: string): string {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
+    .join('/')
+}
+
+function buildEditorUrl(input: {
+  owner: string
+  repo: string
+  branch: string
+  rootPath: string
+  filePath: string | null
+}): string {
+  const base = `/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/${encodeURIComponent(input.branch)}`
+  const filePart = input.filePath ? `/${encodePathForUrl(input.filePath)}` : ''
+  const rootQuery = input.rootPath ? `?root=${encodeURIComponent(input.rootPath)}` : ''
+  return `${base}${filePart}${rootQuery}`
 }
 
 function errorToMessage(error: unknown): string {
