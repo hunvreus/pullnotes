@@ -1,6 +1,7 @@
 import { type HTMLAttributes, useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
+import type { EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
@@ -168,6 +169,23 @@ export function Editor({
         callback();
         return true;
       },
+      handleDOMEvents: {
+        copy: (_view: EditorView, event: ClipboardEvent) => {
+          if (!editor || !event.clipboardData) return false;
+          const content = editor.state.selection.content().content.toJSON();
+          if (!content.length) return false;
+
+          const markdown = editor.markdown.serialize({
+            type: "doc",
+            content,
+          });
+
+          event.preventDefault();
+          event.clipboardData.setData("text/plain", markdown);
+          event.clipboardData.setData("text/markdown", markdown);
+          return true;
+        },
+      },
     },
     editable: !disabled,
     immediatelyRender: false,
@@ -241,6 +259,36 @@ export function Editor({
       editorProps: {
         attributes: {
           class: tiptapSurfaceClass,
+        },
+        handleKeyDown: (view, event) => {
+          if (event.key !== "ArrowUp") return false;
+          const callback = onArrowUpAtStartRef.current;
+          if (!callback) return false;
+
+          const selection = view.state.selection;
+          if (!selection.empty) return false;
+          if (selection.from !== 1) return false;
+
+          event.preventDefault();
+          callback();
+          return true;
+        },
+        handleDOMEvents: {
+          copy: (_view: EditorView, event: ClipboardEvent) => {
+            if (!event.clipboardData) return false;
+            const content = editor.state.selection.content().content.toJSON();
+            if (!content.length) return false;
+
+            const markdown = editor.markdown.serialize({
+              type: "doc",
+              content,
+            });
+
+            event.preventDefault();
+            event.clipboardData.setData("text/plain", markdown);
+            event.clipboardData.setData("text/markdown", markdown);
+            return true;
+          },
         },
       },
     });
