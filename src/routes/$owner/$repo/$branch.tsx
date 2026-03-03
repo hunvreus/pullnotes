@@ -19,6 +19,7 @@ import {
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import { Fragment, type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react'
+import { AboutPullNotesDialog } from '#/components/about-pullnotes-dialog'
 import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
 import {
   Breadcrumb,
@@ -375,6 +376,7 @@ export function App() {
   const [coverSearchError, setCoverSearchError] = useState<string | null>(null)
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
   const [recentRepos, setRecentRepos] = useState<RecentRepoItem[]>([])
+  const [isAboutOpen, setIsAboutOpen] = useState(false)
 
   const owner = String(params.owner || '').trim()
   const repo = String(params.repo || '').trim()
@@ -1623,6 +1625,10 @@ export function App() {
                     </SidebarMenuButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg" align="end" side="top" sideOffset={4}>
+                    <DropdownMenuItem onSelect={() => setIsAboutOpen(true)}>
+                      About PullNotes
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     <DropdownMenuGroup>
                       <DropdownMenuLabel className="text-xs text-muted-foreground">
                         Theme
@@ -2196,6 +2202,7 @@ export function App() {
           </div>
         </div>
       </SidebarInset>
+      <AboutPullNotesDialog open={isAboutOpen} onOpenChange={setIsAboutOpen} />
     </SidebarProvider>
   )
 }

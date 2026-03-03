@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn, useServerFn } from '@tanstack/react-start'
 import { ArrowDown, Check, ChevronsUpDown, Loader2, Lock, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { AboutPullNotesDialog } from '#/components/about-pullnotes-dialog'
 import { Avatar, AvatarFallback, AvatarImage } from '#/components/ui/avatar'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
@@ -210,6 +211,8 @@ function SelectorPage() {
   const [recentRepos, setRecentRepos] = useState<RecentRepoItem[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [themeMode, setThemeMode] = useState<ThemeMode>('system')
+  const [isAboutOpen, setIsAboutOpen] = useState(false)
+  const [isSigningIn, setIsSigningIn] = useState(false)
   const isAuthenticated = Boolean(authSession?.user)
   const installedOwners = useMemo(
     () => owners.filter((item) => item.installationId !== null),
@@ -366,10 +369,15 @@ function SelectorPage() {
   }, [isAuthenticated, selectedOwnerItem, repoQuery, searchRepos])
 
   const handleSignIn = async () => {
-    await authClient.signIn.social({
-      provider: 'github',
-      callbackURL: '/',
-    })
+    setIsSigningIn(true)
+    try {
+      await authClient.signIn.social({
+        provider: 'github',
+        callbackURL: '/',
+      })
+    } catch {
+      setIsSigningIn(false)
+    }
   }
 
   const handleSignOut = async () => {
@@ -446,9 +454,9 @@ function SelectorPage() {
             type="button"
             className="w-full"
             onClick={() => void handleSignIn()}
-            disabled={authPending}
+            disabled={authPending || isSigningIn}
           >
-            {authPending ? (
+            {authPending || isSigningIn ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -703,6 +711,10 @@ function SelectorPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="top" sideOffset={8}>
+            <DropdownMenuItem onSelect={() => setIsAboutOpen(true)}>
+              About PullNotes
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Theme
@@ -729,6 +741,8 @@ function SelectorPage() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <AboutPullNotesDialog open={isAboutOpen} onOpenChange={setIsAboutOpen} />
     </main>
   )
 }
