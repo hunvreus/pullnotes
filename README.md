@@ -1,83 +1,50 @@
 # PullNotes
 
-https://github.com/user-attachments/assets/959e2a7c-b574-436b-9394-99501401793e
-
 Minimal Notion-style Markdown editor for GitHub repositories.
 
-## Stack
+## Install (local)
 
-- TanStack Start
-- shadcn/ui
-- Pages CMS editor (`editor.pagescms.org`)
-- Better Auth (GitHub OAuth)
-- GitHub App (installation + repo access model)
-
-## Data model
-
-Each page is one Markdown file with:
-
-- `title`: first `# H1` in document body (required)
-- `body`: remaining Markdown content
-- `icon`: optional frontmatter
-- `cover`: optional frontmatter
-
-Hierarchy is folder-based only:
-
-- `setup.md` is parent
-- `setup/step-1.md` is a child
-
-Deleting a parent page cascades to all its children.
-
-## Auth and GitHub model
-
-PullNotes uses a hybrid model:
-
-- GitHub App installation controls which repos are accessible.
-- GitHub OAuth user token performs write/delete operations.
-
-This keeps repo access scoped by App install, while commits are attributed to the signed-in user.
-
-## Local setup
-
-1. Install deps:
+1. Install dependencies:
 
 ```bash
 pnpm install
 ```
 
-2. Run setup wizard:
+2. Run setup:
 
 ```bash
 pnpm setup
 ```
 
-This creates/configures a GitHub App from a manifest and writes `.env`.
+This configures the GitHub App and writes your local `.env`.
 
-3. Start dev:
+3. Start development:
 
 ```bash
 pnpm dev
 ```
 
-`pnpm dev` runs auth migrations automatically before starting.
+## Environment variables
 
-## Required env vars
+Set these variables in your deployment environment (and local `.env` when needed):
 
-- `BETTER_AUTH_SECRET`
-- `BETTER_AUTH_URL`
-- `AUTH_DB_PROVIDER` (`sqlite` or `d1`)
-- `DB_PATH` (for sqlite)
-- `DB_D1_BINDING` (for d1 runtime binding name)
-- `GITHUB_APP_ID`
-- `GITHUB_APP_NAME`
-- `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_CLIENT_ID`
-- `GITHUB_APP_CLIENT_SECRET`
-- `PEXELS_API_KEY` (cover image search)
+| Variable | Required | Description |
+| --- | --- | --- |
+| `BETTER_AUTH_SECRET` | Yes | Better Auth signing secret. |
+| `BETTER_AUTH_URL` | Yes | Public base URL of your app (for auth callbacks). |
+| `AUTH_DB_PROVIDER` | Yes | Auth DB provider: `sqlite` or `d1`. |
+| `DB_PATH` | If `AUTH_DB_PROVIDER=sqlite` | SQLite file path. |
+| `DB_D1_BINDING` | If `AUTH_DB_PROVIDER=d1` | D1 binding name. |
+| `GITHUB_APP_ID` | Yes | GitHub App ID. |
+| `GITHUB_APP_NAME` | Yes | GitHub App name. |
+| `GITHUB_APP_PRIVATE_KEY` | Yes | GitHub App private key (PEM). |
+| `GITHUB_APP_CLIENT_ID` | Yes | GitHub App OAuth client ID. |
+| `GITHUB_APP_CLIENT_SECRET` | Yes | GitHub App OAuth client secret. |
+| `PEXELS_API_KEY` | Optional | Enables cover image search in Pexels. |
 
-## GitHub App requirements
+## GitHub App settings
 
-Callbacks:
+Configure your GitHub App with:
 
 - OAuth callback URL: `https://<your-domain>/api/auth/callback/github`
 - Setup URL: `https://<your-domain>/api/github-app/callback`
@@ -85,37 +52,31 @@ Callbacks:
 
 Permissions:
 
-- Repository: `Contents` = Read & write
-- Repository: `Metadata` = Read-only
-- Account: `Email addresses` = Read-only
+- Repository permissions:
+  - `Contents`: Read and write
+  - `Metadata`: Read-only
+- Account permissions:
+  - `Email addresses`: Read-only
 
-Without `Email addresses: Read-only`, some users can hit `?error=email_not_found`.
+## Deploy
 
-## Routing
+1. Set environment variables (see table above).
+2. Install dependencies:
 
-- Home selector: `/`
-- Repo editor: `/:owner/:repo/:branch`
-- Optional query params:
-  - `file`: selected file path
-  - `root`: optional subfolder root
+```bash
+pnpm install --frozen-lockfile
+```
 
-## Editor behavior
+3. Build:
 
-- Save state icons:
-  - clean: check
-  - dirty: save
-  - saving: loader
-- Keyboard save: `Cmd+S` / `Ctrl+S`
-- Sidebar shortcut `Cmd/Ctrl+B` is disabled
-- Top content header is hidden when repo has no files
-- Empty repos use shadcn `Empty` state
-- Cover picker uses Pexels API
-- Icon picker supports emoji search
+```bash
+pnpm build
+```
 
-## Deploy notes
+4. Start:
 
-- Build: `pnpm build` (or `npm run build`)
-- Start: `npm start`
-- Server must run on port `8000` in hosted environments
+```bash
+pnpm start
+```
 
-If using sqlite in production, ensure persistent disk. For serverless/ephemeral environments, prefer `AUTH_DB_PROVIDER=d1`.
+`pnpm start` runs auth migrations and starts the server.
