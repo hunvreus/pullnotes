@@ -162,14 +162,14 @@ const RECENT_REPOS_STORAGE_KEY = 'pullnotes.recent-repos'
 const MAX_RECENT_REPO_MENU_ITEMS = 5
 const IMAGE_ASSET_ROOT = '_files'
 
-const listFilesServerFn = createServerFn({ method: 'GET' })
+const listFilesServerFn = createServerFn({ method: 'POST' })
   .inputValidator((input: { target: RepoTargetInput }) => input)
   .handler(async ({ data }) => {
     await requireSession()
     return listMarkdownEntriesViaGraphql(data.target)
   })
 
-const getFileServerFn = createServerFn({ method: 'GET' })
+const getFileServerFn = createServerFn({ method: 'POST' })
   .inputValidator((input: { target: RepoTargetInput; path: string }) => input)
   .handler(async ({ data }) => {
     await requireSession()
@@ -1189,6 +1189,15 @@ export function App() {
     if (!selectedPath) return false
     const draftAtStart = latestDraftRef.current
     const cleanTitle = draftAtStart.title.trim()
+    const persistedBody = mapImageSourcesInMarkdown(draftAtStart.body, (src) =>
+      fromRenderedImageUrl({
+        owner,
+        repo,
+        branch,
+        rootPath,
+        renderedPath: src,
+      }),
+    )
     if (!cleanTitle) {
       setErrorMessage('Title is required.')
       return false
@@ -1206,7 +1215,7 @@ export function App() {
           title: cleanTitle,
           icon: draftAtStart.icon,
           cover: draftAtStart.cover,
-          body: draftAtStart.body,
+          body: persistedBody,
           sha,
         },
       })
@@ -1277,17 +1286,7 @@ export function App() {
   }
 
   const handleBodyChange = (nextBody: string) => {
-    const normalizedBody = mapImageSourcesInMarkdown(nextBody, (src) =>
-      fromRenderedImageUrl({
-        owner,
-        repo,
-        branch,
-        rootPath,
-        renderedPath: src,
-      }),
-    )
-
-    setBody(normalizedBody)
+    setBody(nextBody)
     const isEditorFocused =
       typeof document !== 'undefined' &&
       Boolean(editorRegionRef.current?.contains(document.activeElement))
