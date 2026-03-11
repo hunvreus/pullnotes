@@ -2776,46 +2776,50 @@ export function App() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
-                <div className="inline-flex items-center gap-2">
-                  <label
-                    htmlFor="autosave-switch"
-                    className={`text-xs ${isSaving ? 'cursor-not-allowed text-muted-foreground' : 'cursor-pointer text-foreground'}`}
-                  >
-                    Autosave
-                  </label>
-                  <Switch
-                    id="autosave-switch"
-                    checked={isAutosaveEnabled}
-                    onCheckedChange={setIsAutosaveEnabled}
-                    disabled={isSaving}
-                    aria-label="Toggle autosave"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 rounded-r-none px-2 text-xs"
-                    onClick={() => void handleSave()}
-                    disabled={!canSave}
-                  >
-                    Save
-                    <span className="ml-2 inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                      <Command className="size-3" />
-                      <span>S</span>
-                    </span>
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 w-7 rounded-l-none border-l-0 p-0"
-                    onClick={handleResetChanges}
-                    disabled={!isDirty || !isSelectedFileLoaded || isSaving}
-                    title="Discard all unsaved changes"
-                    aria-label="Discard all unsaved changes"
-                  >
-                    <Undo2 className="size-3.5" />
-                  </Button>
+                <div className="inline-flex items-center gap-3">
+                  <div className="inline-flex items-center gap-2">
+                    <label
+                      htmlFor="autosave-switch"
+                      className={`text-xs ${isSaving ? 'cursor-not-allowed text-muted-foreground' : 'cursor-pointer text-foreground'}`}
+                    >
+                      Autosave
+                    </label>
+                    <Switch
+                      id="autosave-switch"
+                      checked={isAutosaveEnabled}
+                      onCheckedChange={setIsAutosaveEnabled}
+                      disabled={isSaving}
+                      aria-label="Toggle autosave"
+                    />
+                  </div>
+                  <div className="inline-flex items-center gap-0">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 rounded-r-none px-2 text-xs"
+                      onClick={() => void handleSave()}
+                      disabled={!canSave}
+                    >
+                      Save
+                      <span className="ml-2 hidden items-center gap-0.5 text-[10px] text-muted-foreground md:inline-flex">
+                        <Command className="size-3" />
+                        <span>S</span>
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-7 rounded-l-none border-l-0 p-0"
+                      onClick={handleResetChanges}
+                      disabled={!isDirty || !isSelectedFileLoaded || isSaving}
+                      title="Discard all unsaved changes"
+                      aria-label="Discard all unsaved changes"
+                    >
+                      <Undo2 className="size-3.5" />
+                    </Button>
+                  </div>
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -3272,6 +3276,7 @@ export function App() {
                       className="cn-editor h-full"
                       editorClassName="h-full min-h-full border-0 bg-transparent px-0 pt-2 pb-10 text-base leading-7 shadow-none focus-visible:ring-0 focus-visible:border-transparent"
                       format="markdown"
+                      tocKey={selectedPath || ''}
                       value={bodyForEditor}
                       onChange={handleBodyChange}
                       onArrowUpAtStart={focusTitleInput}

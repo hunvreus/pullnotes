@@ -101,6 +101,7 @@ export type EditorProps = {
   onRequestImage?: ImagePickerHandler;
   onPendingUploadsChange?: (count: number) => void;
   onSlashCommandOpenChange?: (open: boolean) => void;
+  tocKey?: string;
   className?: string;
   editorClassName?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, "onChange" | "className">;
@@ -217,6 +218,7 @@ export function Editor({
   onRequestImage,
   onPendingUploadsChange,
   onSlashCommandOpenChange,
+  tocKey,
   className,
   editorClassName,
   ...props
@@ -444,7 +446,7 @@ export function Editor({
   useEffect(() => {
     if (!editor) return;
     emitToc(editor);
-  }, [editor, value]);
+  }, [editor, value, tocKey]);
 
   useEffect(() => {
     if (!editor) return;
